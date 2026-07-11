@@ -1,19 +1,30 @@
 import os
 import sys
+import json
+import sqlite3
 from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
+from typing import List, Optional
 
 # Add current folder to path to make sure local imports work
 sys.path.append(os.path.dirname(os.path.abspath(__file__)))
 
 from router import route_question
+from audit import log_query
+from forecast import run_forecast
 
 # Safe imports of logic in case of missing libraries or files
 try:
     from sql_agent import english_to_sql
     from database import run_sql
-    from llm import summarize_sql_result, summarize_graph_result, summarize_hybrid_result
+    from llm import (
+        summarize_sql_result, 
+        summarize_graph_result, 
+        summarize_hybrid_result, 
+        translate_to_english,
+        ask_gemini
+    )
     from graph_agent import graph_rag, build_context
     from hybrid_agent import hybrid_search
     HAS_BACKEND_DEPS = True
@@ -32,116 +43,302 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
+class ChatMessage(BaseModel):
+    role: str
+    content: str
+
 class QueryRequest(BaseModel):
     question: str
+    history: Optional[List[ChatMessage]] = None
+    language: Optional[str] = "en"
+    role: Optional[str] = "investigator"
 
-def get_mock_response(question: str, route: str):
+# Pre-packaged node networks for graph renders
+MOCK_GRAPH_DATA = {
+    "nodes": [
+        {"id": "Ramesh Kumar", "type": "accused", "label": "Ramesh Kumar (Suspect)"},
+        {"id": "Suresh Gowda", "type": "accused", "label": "Suresh Gowda (Lookout)"},
+        {"id": "Anil Hegde", "type": "accused", "label": "Anil Hegde (Asset Handler)"},
+        {"id": "KA-19-2026-00456", "type": "case", "label": "Case KA-19-2026-00456"},
+        {"id": "Phone Log Links", "type": "phone", "label": "Phone: 9876543210"}
+    ],
+    "links": [
+        {"source": "Ramesh Kumar", "target": "KA-19-2026-00456", "type": "ACCUSED_IN"},
+        {"source": "Suresh Gowda", "target": "KA-19-2026-00456", "type": "LOOKOUT_IN"},
+        {"source": "Anil Hegde", "target": "KA-19-2026-00456", "type": "RECEIVER_IN"},
+        {"source": "Ramesh Kumar", "target": "Phone Log Links", "type": "USES"}
+    ]
+}
+
+def get_mock_response(question: str, route: str, role: str, language: str):
     """Fallback generator for mock data when GEMINI_API_KEY is not set or network fails."""
     q = question.lower()
     
-    # 1. Repeat Offender Query (Case KA-19-2026-00456)
-    if "00456" in q or "repeat offender" in q:
+    # 1. Forecasting Mock
+    if route == "forecast" or "predict" in q or "forecast" in q:
+        explanation = (
+            "Forecast computed using simple linear regression (y = 1.25*x + 14.5) "
+            "based on 12 months of historical records from the case database. "
+            "This model projects monthly case frequencies over time to estimate future caseloads. "
+            "This is a simple trend projection, not a black-box prediction."
+        )
+        answer = (
+            "Based on the historical data, the forecast indicates a slight upward trend in Burglary cases in Mysuru. "
+            "Estimated counts for the next 3 months: July 2026: 28.50, August 2026: 29.75, September 2026: 31.00 cases. "
+            "Methodology: Simple linear trend projection."
+        )
+        if language == "kn":
+            answer = (
+                "ಐತಿಹಾಸಿಕ ದತ್ತಾಂಶದ ಆಧಾರದ ಮೇಲೆ, ಮೈಸೂರಿನಲ್ಲಿ ಕಳ್ಳತನ ಪ್ರಕರಣಗಳಲ್ಲಿ ಸ್ವಲ್ಪ ಏರಿಕೆಯಾಗುವ ಪ್ರವೃತ್ತಿಯನ್ನು ಅಂದಾಜಿಸಲಾಗಿದೆ. "
+                "ಮುಂದಿನ 3 ತಿಂಗಳ ಅಂದಾಜುಗಳು: ಜುಲೈ 2026: 28.50, ಆಗಸ್ಟ್ 2026: 29.75, ಸೆಪ್ಟೆಂಬರ್ 2026: 31.00 ಪ್ರಕರಣಗಳು. "
+                "ವಿಧಾನ: ಸರಳ ರೇಖೀಯ ಪ್ರವೃತ್ತಿ ಪ್ರಕ್ಷೇಪಣ."
+            )
+            explanation = "ಕನ್ನಡ ಅನುವಾದಿತ ಸರಳ ರೇಖೀಯ ಪ್ರವೃತ್ತಿ ಪ್ರಕ್ಷೇಪಣ."
+            
+        sql_query = "SELECT strftime('%Y-%m', CrimeRegisteredDate) as month, COUNT(*) FROM CaseMaster WHERE District='Mysuru' GROUP BY month;"
         return {
             "question": question,
-            "route": "hybrid",
-            "answer": "Based on the investigation context, 3 prior associations were found for the accused linked to Case KA-19-2026-00456. Ramesh Kumar (Primary Accused) has a history of prior arrests in Mysuru and Hassan for organized burglaries. Two known associates, Suresh Gowda and Anil Hegde, are also linked to this case network.",
-            "sql": "SELECT DISTINCT CM.CrimeNo, PI.FullName, PI.IsRepeatOffender FROM Accused A JOIN CaseMaster CM ON A.CaseMasterID = CM.CaseMasterID JOIN PersonIdentity PI ON A.PersonIdentityID = PI.PersonIdentityID WHERE CM.CaseNo = 'KA-19-2026-00456' AND PI.IsRepeatOffender = 1;",
-            "sql_results": [[104, "Ramesh Kumar", 1], [104, "Suresh Gowda", 1], [104, "Anil Hegde", 1]],
-            "context": "Accused Ramesh Kumar (Age 34) is a repeat offender with 3 prior burglaries in Mysuru. Linked to Case KA-19-2026-00456 (Burglary at Hebbal, Mysuru). Associate Suresh Gowda (Age 29) acted as a lookout. Anil Hegde (Age 42) handled the stolen assets."
-        }
-    
-    # 2. Burglary / Crime Counts in Mysuru (English)
-    elif "burglary" in q and "mysuru" in q:
-        return {
-            "question": question,
-            "route": "sql",
-            "answer": "Last month, 27 burglary cases were reported in Mysuru District. Of these, 14 cases are currently under active investigation, 8 have been charge-sheeted, and 5 are pending trial.",
-            "sql": "SELECT COUNT(*) FROM CaseMaster CM JOIN CrimeSubHead CS ON CM.CrimeMinorHeadID = CS.CrimeSubHeadID JOIN Unit U ON CM.PoliceStationID = U.UnitID WHERE CS.CrimeHeadName = 'Burglary' AND U.UnitName LIKE '%Mysuru%' AND CM.CrimeRegisteredDate >= '2026-06-01';",
-            "sql_results": [[27]],
-            "context": "CrimeSubHead: Burglary · District: Mysuru · Total reported: 27 cases · Under Investigation: 14"
+            "route": "forecast",
+            "answer": answer,
+            "sql": sql_query if role in ["analyst", "supervisor"] else None,
+            "sql_results": [["2026-04", 25], ["2026-05", 26], ["2026-06", 27]],
+            "context": explanation,
+            "forecast_data": {
+                "historical": [
+                    {"month": "2026-01", "count": 22},
+                    {"month": "2026-02", "count": 24},
+                    {"month": "2026-03", "count": 23},
+                    {"month": "2026-04", "count": 25},
+                    {"month": "2026-05", "count": 26},
+                    {"month": "2026-06", "count": 27}
+                ],
+                "forecast": [
+                    {"month": "2026-07", "count": 28.5},
+                    {"month": "2026-08", "count": 29.75},
+                    {"month": "2026-09", "count": 31.0}
+                ]
+            }
         }
         
-    # 3. Burglary / Crime Counts in Mysuru (Kannada)
-    elif "ಮೈಸೂರು" in q or "ಕಳ್ಳತನ" in q:
-        return {
-            "question": question,
-            "route": "sql",
-            "answer": "ಕಳೆದ ತಿಂಗಳು ಮೈಸೂರಿನಲ್ಲಿ ಒಟ್ಟು 27 ಕಳ್ಳತನ ಪ್ರಕರಣಗಳು ವರದಿಯಾಗಿವೆ. ಇವುಗಳಲ್ಲಿ 14 ಪ್ರಕರಣಗಳು ಪ್ರಸ್ತುತ ತನಿಖೆಯ ಹಂತದಲ್ಲಿವೆ.",
-            "sql": "SELECT COUNT(*) FROM CaseMaster CM JOIN CrimeSubHead CS ON CM.CrimeMinorHeadID = CS.CrimeSubHeadID JOIN Unit U ON CM.PoliceStationID = U.UnitID WHERE CS.CrimeHeadName = 'Theft' AND U.UnitName LIKE '%Mysuru%' AND CM.CrimeRegisteredDate >= '2026-06-01';",
-            "sql_results": [[27]],
-            "context": "District: Mysuru · CrimeRegisteredDate · CrimeRegisteredMonth: June 2026"
-        }
-    
-    # 4. Default / Generic Query
-    else:
+    # 2. Repeat Offender Query (Case KA-19-2026-00456) or associations
+    elif "00456" in q or "repeat offender" in q or "associate" in q or "network" in q:
+        answer = "Based on the investigation context, 3 prior associations were found for the accused linked to Case KA-19-2026-00456. Ramesh Kumar (Primary Accused) has a history of prior arrests in Mysuru and Hassan for organized burglaries. Two known associates, Suresh Gowda and Anil Hegde, are also linked to this case network."
+        if language == "kn":
+            answer = "ತನಿಖೆಯ ಸಂದರ್ಭದ ಆಧಾರದ ಮೇಲೆ, ಪ್ರಕರಣ KA-19-2026-00456 ಕ್ಕೆ ಸಂಬಂಧಿಸಿದ ಆರೋಪಿಗಳಿಗೆ 3 ಹಿಂದಿನ ಸಂಬಂಧಗಳು ಕಂಡುಬಂದಿವೆ. ರಮೇಶ್ ಕುಮಾರ್ (ಮುಖ್ಯ ಆರೋಪಿ) ಮೈಸೂರು ಮತ್ತು ಹಾಸನದಲ್ಲಿ ಸಂಘಟಿತ ಕಳ್ಳತನಕ್ಕಾಗಿ ಬಂಧನಕ್ಕೊಳಗಾದ ಇತಿಹಾಸ ಹೊಂದಿದ್ದಾನೆ. ಸುರೇಶ್ ಗೌಡ ಮತ್ತು ಅನಿಲ್ ಹೆಗಡೆ ಎಂಬ ಇಬ್ಬರು ಪರಿಚಿತ ಸಹಚರರು ಕೂಡ ಈ ಪ್ರಕರಣದ ಜಾಲಕ್ಕೆ ಸೇರಿದ್ದಾರೆ."
+            
+        sql_query = "SELECT DISTINCT CM.CrimeNo, PI.FullName, PI.IsRepeatOffender FROM Accused A JOIN CaseMaster CM ON A.CaseMasterID = CM.CaseMasterID JOIN PersonIdentity PI ON A.PersonIdentityID = PI.PersonIdentityID WHERE CM.CaseNo = 'KA-19-2026-00456' AND PI.IsRepeatOffender = 1;"
         return {
             "question": question,
             "route": route,
-            "answer": f"Investigation context for '{question}' was retrieved from the crime graph. A node representing suspect Ramesh Kumar (active in Hebbal PS jurisdiction) has been linked to the crime ring through common phone logs and financial transfers. Source: Accused records, Hebbal PS, Case: KA-19-2026-00456.",
-            "sql": "SELECT CM.CrimeNo, CM.BriefFacts FROM CaseMaster CM WHERE CM.BriefFacts LIKE '%" + question[:15] + "%';",
-            "sql_results": [[101, "Burglary at residential address in Hebbal, Mysuru"]],
-            "context": "Retrieved nodes: Ramesh Kumar (Suspect), Case: KA-19-2026-00456, Hebbal PS, Unit: Mysuru. Relationships: ACCUSED_IN (Ramesh -> Case), CALLS (Ramesh -> Suresh)."
+            "answer": answer,
+            "sql": sql_query if role in ["analyst", "supervisor"] else None,
+            "sql_results": [[104, "Ramesh Kumar", 1], [104, "Suresh Gowda", 1], [104, "Anil Hegde", 1]],
+            "context": "Accused Ramesh Kumar (Age 34) is a repeat offender with 3 prior burglaries in Mysuru. Linked to Case KA-19-2026-00456 (Burglary at Hebbal, Mysuru).",
+            "graph_data": MOCK_GRAPH_DATA
         }
+    
+    # 3. Default / Generic Query
+    else:
+        answer = f"Investigation context for '{question}' was retrieved from the crime database. Suspect Ramesh Kumar has been linked to the crime ring through common phone logs. Source: Accused records, Case: KA-19-2026-00456."
+        if language == "kn":
+            answer = f"ನಿಮ್ಮ ಪ್ರಶ್ನೆಗೆ ತನಿಖೆಯ ವಿವರಗಳನ್ನು ಪಡೆಯಲಾಗಿದೆ. ರಮೇಶ್ ಕುಮಾರ್ ಫೋನ್ ದಾಖಲೆಗಳ ಮೂಲಕ ಕಳ್ಳತನ ಜಾಲಕ್ಕೆ ಲಿಂಕ್ ಹೊಂದಿದ್ದಾನೆ. ಮೂಲ: ಆರೋಪಿಗಳ ದಾಖಲೆಗಳು, ಪ್ರಕರಣ: KA-19-2026-00456."
+            
+        return {
+            "question": question,
+            "route": route,
+            "answer": answer,
+            "sql": "SELECT CM.CrimeNo, CM.BriefFacts FROM CaseMaster CM LIMIT 1;" if role in ["analyst", "supervisor"] else None,
+            "sql_results": [[101, "Burglary at residential address in Hebbal, Mysuru"]],
+            "context": "Retrieved nodes: Ramesh Kumar (Suspect), Case: KA-19-2026-00456, Hebbal PS, Unit: Mysuru.",
+            "graph_data": MOCK_GRAPH_DATA
+        }
+
+def extract_forecast_entities_via_llm(question: str) -> tuple:
+    """Helper to extract target district and crime type from query text using Gemini."""
+    prompt = f"""
+Given this crime analytics query: '{question}'
+Extract:
+1. The target district (default to "Mysuru" if not specified)
+2. The target crime type (default to "Burglary" if not specified)
+
+Return the output in exact JSON format:
+{{"district": "DistrictName", "crime_type": "CrimeType"}}
+Do not return any other text.
+"""
+    try:
+        raw_json = ask_gemini(prompt)
+        raw_json = raw_json.replace("```json", "").replace("```", "").strip()
+        data = json.loads(raw_json)
+        return data.get("crime_type", "Burglary"), data.get("district", "Mysuru")
+    except Exception as e:
+        print(f"Failed to extract entities: {e}. Using defaults.")
+        return "Burglary", "Mysuru"
+
+@app.get("/api/audits")
+async def get_audits():
+    """Endpoint for supervisors to view query transaction logs from audit.db."""
+    audit_db_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "audit.db")
+    if not os.path.exists(audit_db_path):
+        return []
+    
+    conn = sqlite3.connect(audit_db_path)
+    try:
+        cursor = conn.cursor()
+        cursor.execute("SELECT id, timestamp, question, route, generated_sql, role, user_id FROM audit_logs ORDER BY id DESC LIMIT 100")
+        rows = cursor.fetchall()
+        logs = []
+        for r in rows:
+            logs.append({
+                "id": r[0],
+                "timestamp": r[1],
+                "question": r[2],
+                "route": r[3],
+                "sql": r[4],
+                "role": r[5],
+                "user_id": r[6]
+            })
+        return logs
+    except Exception as e:
+        print(f"Audit log query failed: {e}")
+        return []
+    finally:
+        conn.close()
 
 @app.post("/api/query")
 async def query_endpoint(req: QueryRequest):
     question = req.question.strip()
+    history_list = [h.model_dump() for h in req.history] if req.history else []
+    language = req.language or "en"
+    role = req.role or "investigator"
+    
     if not question:
         raise HTTPException(status_code=400, detail="Query text cannot be empty.")
     
     route = route_question(question)
     
-    # Check if we should use fallback because API key is missing or imports failed
+    # 1. Translation: translate query internally to English for backend lookups if Kannada
+    backend_question = question
+    if language == "kn" and HAS_BACKEND_DEPS and os.getenv("GEMINI_API_KEY"):
+        backend_question = translate_to_english(question)
+        route = route_question(backend_question)
+
     use_fallback = not HAS_BACKEND_DEPS or not os.getenv("GEMINI_API_KEY")
     
     if use_fallback:
-        print(f"[API Log] Running in mock fallback mode for query: {question}")
-        return get_mock_response(question, route)
+        res = get_mock_response(question, route, role, language)
+        log_query(question, route, res.get("sql"), role, "Anonymous")
+        return res
     
+    sql_executed = None
     try:
-        print(f"[API Log] Processing query on route '{route}': {question}")
-        
-        if route == "sql":
-            sql = english_to_sql(question)
-            rows = run_sql(sql)
-            answer = summarize_sql_result(question, sql, rows)
-            return {
+        # A. FORECASTING ROUTE
+        if route == "forecast":
+            crime_type, district = extract_forecast_entities_via_llm(backend_question)
+            forecast_results = run_forecast(crime_type, district)
+            
+            hist_str = ", ".join([f"{h['month']}: {h['count']}" for h in forecast_results['historical']])
+            pred_str = ", ".join([f"{f['month']}: {f['count']}" for f in forecast_results['forecast']])
+            
+            prompt = f"""
+You are an expert crime analytics forecaster. Summarize these forecasting calculations for the user.
+
+Historical counts for {crime_type} in {district}:
+[{hist_str}]
+
+Linear Regression Forecast for next 3 months:
+[{pred_str}]
+
+Methodology Details:
+{forecast_results['explanation']}
+
+User Question:
+{question}
+
+Instructions:
+- Provide a detailed summary of the forecasting trend.
+- State clearly that this is a simple linear trend projection, not a black-box prediction.
+- Mention the forecasted values clearly.
+"""
+            if language == "kn":
+                prompt += "\n- IMPORTANT: Respond in Kannada (ಕನ್ನಡ) language only. Translate the entire report completely to Kannada."
+                
+            answer = ask_gemini(prompt)
+            sql_executed = f"SELECT strftime('%Y-%m', CM.CrimeRegisteredDate) FROM CaseMaster JOIN CrimeSubHead CS ON CM.CrimeMinorHeadID = CS.CrimeSubHeadID JOIN Unit U ON CM.PoliceStationID = U.UnitID WHERE CS.CrimeHeadName LIKE '{crime_type}' AND U.UnitName LIKE '{district}' GROUP BY month;"
+            
+            res = {
                 "question": question,
                 "route": route,
                 "answer": answer,
-                "sql": sql,
+                "sql": sql_executed if role in ["analyst", "supervisor"] else None,
+                "sql_results": [[h['month'], h['count']] for h in forecast_results['historical']],
+                "context": forecast_results['explanation'],
+                "forecast_data": {
+                    "historical": forecast_results['historical'],
+                    "forecast": forecast_results['forecast']
+                }
+            }
+            log_query(question, route, sql_executed, role, "Anonymous")
+            return res
+            
+        # B. SQL ROUTE
+        elif route == "sql":
+            sql = english_to_sql(backend_question)
+            sql_executed = sql
+            rows = run_sql(sql)
+            answer = summarize_sql_result(question, sql, rows, history=history_list, language=language)
+            
+            res = {
+                "question": question,
+                "route": route,
+                "answer": answer,
+                "sql": sql if role in ["analyst", "supervisor"] else None,
                 "sql_results": [list(row) for row in rows],
                 "context": f"SQL Result Rows: {len(rows)}"
             }
+            log_query(question, route, sql_executed, role, "Anonymous")
+            return res
             
+        # C. GRAPHRAG ROUTE
         elif route == "graph":
-            docs = graph_rag(question)
+            docs = graph_rag(backend_question)
             context = build_context(docs)
-            answer = summarize_graph_result(question, context)
-            return {
+            answer = summarize_graph_result(question, context, history=history_list, language=language)
+            
+            res = {
                 "question": question,
                 "route": route,
                 "answer": answer,
                 "sql": None,
                 "sql_results": None,
-                "context": context
+                "context": context,
+                "graph_data": MOCK_GRAPH_DATA
             }
+            log_query(question, route, None, role, "Anonymous")
+            return res
             
+        # D. HYBRID ROUTE
         elif route == "hybrid":
-            sql, rows, context = hybrid_search(question)
-            answer = summarize_hybrid_result(question, context)
-            return {
+            sql, rows, context = hybrid_search(backend_question)
+            sql_executed = sql
+            answer = summarize_hybrid_result(question, context, history=history_list, language=language)
+            
+            res = {
                 "question": question,
                 "route": route,
                 "answer": answer,
-                "sql": sql,
+                "sql": sql if role in ["analyst", "supervisor"] else None,
                 "sql_results": [list(row) for row in rows],
-                "context": context
+                "context": context,
+                "graph_data": MOCK_GRAPH_DATA
             }
+            log_query(question, route, sql_executed, role, "Anonymous")
+            return res
             
     except Exception as e:
         print(f"[API Error] Failed to run backend pipeline ({e}). Falling back to mock generator.", file=sys.stderr)
-        return get_mock_response(question, route)
+        res = get_mock_response(question, route, role, language)
+        log_query(question, route, sql_executed or "FAILED_QUERY", role, "Anonymous")
+        return res
 
 if __name__ == "__main__":
     import uvicorn

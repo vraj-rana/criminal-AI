@@ -1,3 +1,11 @@
+FORECAST_KEYWORDS = [
+    "predict",
+    "forecast",
+    "next month",
+    "expected",
+    "trend for"
+]
+
 GRAPH_KEYWORDS = [
 
     "similar",
@@ -55,6 +63,13 @@ HYBRID_KEYWORDS = [
 def route_question(question):
 
     q = question.lower()
+
+    # -----------------------------
+    # Forecast
+    # -----------------------------
+    for word in FORECAST_KEYWORDS:
+        if word in q:
+            return "forecast"
 
     # -----------------------------
     # Hybrid
