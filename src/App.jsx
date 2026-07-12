@@ -42,13 +42,13 @@ export default function App() {
   const [language, setLanguage] = useState("en"); // "en" | "kn"
   const [role, setRole] = useState("investigator"); // "investigator" | "analyst" | "supervisor" | "policymaker"
   const [theme, setTheme] = useState("dark"); // "dark" | "light"
-  
+
   // Custom states for visual logs and drawers
   const [isListening, setIsListening] = useState(false);
   const [speechSupported, setSpeechSupported] = useState(true);
   const [showAuditDrawer, setShowAuditDrawer] = useState(false);
   const [auditLogs, setAuditLogs] = useState([]);
-  
+
   const threadEndRef = useRef(null);
   const recognitionRef = useRef(null);
 
@@ -100,7 +100,7 @@ export default function App() {
       const rec = new SpeechRecognition();
       rec.continuous = false;
       rec.interimResults = false;
-      
+
       rec.onstart = () => setIsListening(true);
       rec.onend = () => setIsListening(false);
       rec.onerror = (e) => {
@@ -111,7 +111,7 @@ export default function App() {
         const resultText = event.results[0][0].transcript;
         setInputVal((prev) => prev + (prev ? " " : "") + resultText);
       };
-      
+
       recognitionRef.current = rec;
     }
   }, []);
@@ -154,7 +154,7 @@ export default function App() {
 
   const toggleMic = () => {
     if (!speechSupported || !recognitionRef.current) return;
-    
+
     if (isListening) {
       recognitionRef.current.stop();
     } else {
@@ -170,7 +170,7 @@ export default function App() {
       messages: [
         {
           role: "assistant",
-          content: language === "kn" 
+          content: language === "kn"
             ? "ವಿಜಿಲ್ ಎಐ ಅಪರಾಧ ಗುಪ್ತಚರ ವೇದಿಕೆಗೆ ಸುಸ್ವಾಗತ. ನೀವು ಪ್ರಕರಣದ ಕಡತಗಳು, ಅಪರಾಧಿಗಳ ವಿವರಗಳು ಅಥವಾ ಅಪರಾಧ ಪ್ರವೃತ್ತಿಗಳ ಬಗ್ಗೆ ಕನ್ನಡ ಮತ್ತು ಇಂಗ್ಲಿಷ್‌ನಲ್ಲಿ ವಿವರವಾಗಿ ಪ್ರಶ್ನಿಸಬಹುದು."
             : "Welcome to Vigil AI Crime Intelligence Platform. You can query case files, offender records, or trend forecasts in English and Kannada.",
           route: "system",
@@ -217,12 +217,12 @@ export default function App() {
   const handleExportPDF = () => {
     const doc = new jsPDF();
     let yOffset = 20;
-    
+
     doc.setFont("helvetica", "bold");
     doc.setFontSize(16);
     doc.text("Vigil AI - Official Case Investigation Log", 14, yOffset);
     yOffset += 10;
-    
+
     doc.setFontSize(10);
     doc.setFont("helvetica", "normal");
     doc.text(`Role Level: ${role.toUpperCase()}  |  Language: ${language.toUpperCase()}  |  Theme: ${theme.toUpperCase()}`, 14, yOffset);
@@ -235,7 +235,7 @@ export default function App() {
         doc.addPage();
         yOffset = 20;
       }
-      
+
       doc.setFont("helvetica", "bold");
       const sender = msg.role === "user" ? "USER" : "ASSISTANT";
       doc.text(`[${msg.timestamp}] ${sender}:`, 14, yOffset);
@@ -328,7 +328,7 @@ export default function App() {
       if (!response.ok) throw new Error("API Offline");
 
       const data = await response.json();
-      
+
       setChats((prevChats) =>
         prevChats.map((c) => {
           if (c.id === activeChatId) {
@@ -354,7 +354,7 @@ export default function App() {
       );
     } catch (err) {
       console.warn("Backend server unreachable. Generating response via local mock fallback.");
-      
+
       setChats((prevChats) =>
         prevChats.map((c) => {
           if (c.id === activeChatId) {
@@ -389,7 +389,7 @@ export default function App() {
 
         if (queryLower.includes("predict") || queryLower.includes("forecast") || queryLower.includes("next month")) {
           mockRoute = "forecast";
-          mockAnswer = language === "kn" 
+          mockAnswer = language === "kn"
             ? "**ಸಾರಾಂಶ:** ಮೈಸೂರಿನಲ್ಲಿ ಕಳ್ಳತನ ಪ್ರಕರಣಗಳಲ್ಲಿ ಸ್ವಲ್ಪ ಏರಿಕೆಯಾಗುವ ಪ್ರವೃತ್ತಿಯನ್ನು ಅಂದಾಜಿಸಲಾಗಿದೆ.\n\n**ಮುಖ್ಯಾಂಶಗಳು:**\n- **ಜುಲೈ 2026 ಪ್ರಕರಣಗಳು**: 28.50 ಪ್ರಕರಣಗಳು.\n- **ಆಗಸ್ಟ್ 2026 ಪ್ರಕರಣಗಳು**: 29.75 ಪ್ರಕರಣಗಳು.\n- **ಸೆಪ್ಟೆಂಬರ್ 2026 ಪ್ರಕರಣಗಳು**: 31.00 ಪ್ರಕರಣಗಳು."
             : "**Summary:** The caseload forecast indicates a slight upward trend in Burglary cases in Mysuru.\n\n**Key Findings:**\n- **July 2026 Caseload**: Projected at 28.50 cases.\n- **August 2026 Caseload**: Projected at 29.75 cases.\n- **September 2026 Caseload**: Projected at 31.00 cases.\n\n**Details:**\nProjections utilize linear trend calculations over 12 months of historical crime master data.";
           mockSql = "SELECT strftime('%Y-%m', CM.CrimeRegisteredDate) as month, COUNT(*) FROM CaseMaster CM GROUP BY month;";
@@ -501,10 +501,9 @@ export default function App() {
   };
 
   return (
-    <div 
-      className={`flex flex-col h-screen overflow-hidden transition-colors duration-300 ${
-        theme === "dark" ? "bg-[#061224] text-stone-200" : "bg-[#EEF0F1] text-slate-800"
-      }`}
+    <div
+      className={`flex flex-col h-screen overflow-hidden transition-colors duration-300 ${theme === "dark" ? "bg-[#061224] text-stone-200" : "bg-[#EEF0F1] text-slate-800"
+        }`}
       style={{
         "--navy": "#0B1F3A",
         "--midnight": "#061224",
@@ -675,10 +674,9 @@ export default function App() {
       {/* BODY WORKSPACE AREA */}
       <div className="flex flex-1 overflow-hidden">
         {/* SIDEBAR */}
-        <aside 
-          className={`w-64 shrink-0 border-r flex flex-col overflow-hidden ${
-            theme === "dark" ? "bg-[#0b1b2f] border-[#1e3a5f]" : "bg-white border-[#dde1e4]"
-          }`}
+        <aside
+          className={`w-64 shrink-0 border-r flex flex-col overflow-hidden ${theme === "dark" ? "bg-[#0b1b2f] border-[#1e3a5f]" : "bg-white border-[#dde1e4]"
+            }`}
         >
           <div className="p-4 border-b border-opacity-15 border-slate-500">
             <button
@@ -700,11 +698,10 @@ export default function App() {
                 <div
                   key={c.id}
                   onClick={() => setActiveChatId(c.id)}
-                  className={`group w-full flex items-center justify-between px-3 py-2.5 rounded text-xs font-mono cursor-pointer transition-all ${
-                    isActive
+                  className={`group w-full flex items-center justify-between px-3 py-2.5 rounded text-xs font-mono cursor-pointer transition-all ${isActive
                       ? theme === "dark" ? "bg-[#0f2745] text-stone-100" : "bg-slate-200 text-slate-900 font-semibold"
                       : "hover:bg-slate-500 hover:bg-opacity-5 text-slate-400 hover:text-stone-300"
-                  }`}
+                    }`}
                 >
                   <div className="flex items-center gap-2 truncate">
                     <svg className="w-3.5 h-3.5 shrink-0 opacity-60" fill="none" stroke="currentColor" strokeWidth="2" viewBox="0 0 24 24">
@@ -729,16 +726,15 @@ export default function App() {
 
         {/* MAIN CHAT AREA */}
         <div className="flex-1 flex flex-col overflow-hidden relative">
-          
+
           <main className="flex-1 overflow-y-auto px-6 py-6">
             <div className="max-w-3xl mx-auto space-y-6"> {/* Increased thread spacing (Fix 5.5) */}
-              
+
               {activeChat.messages.length <= 1 ? (
                 <div className="flex flex-col items-center justify-center py-6 space-y-8 animate-fade-in">
-                  
-                  <div className={`max-w-2xl px-5 py-4 rounded-lg text-sm text-center leading-relaxed ${
-                    theme === "dark" ? "bubble-assistant-dark" : "bubble-assistant-light"
-                  }`}>
+
+                  <div className={`max-w-2xl px-5 py-4 rounded-lg text-sm text-center leading-relaxed ${theme === "dark" ? "bubble-assistant-dark" : "bubble-assistant-light"
+                    }`}>
                     {activeChat.messages[0]?.content}
                   </div>
 
@@ -754,11 +750,10 @@ export default function App() {
                       <button
                         key={idx}
                         onClick={() => handleSend(s.q)}
-                        className={`text-left p-4 rounded-lg border transition-all text-xs flex flex-col gap-2 shadow-sm hover:-translate-y-0.5 hover:shadow-md ${
-                          theme === "dark" 
-                            ? "bg-[#0f2745] border-[#1e3a5f] hover:border-[#C6963C] text-stone-200" 
+                        className={`text-left p-4 rounded-lg border transition-all text-xs flex flex-col gap-2 shadow-sm hover:-translate-y-0.5 hover:shadow-md ${theme === "dark"
+                            ? "bg-[#0f2745] border-[#1e3a5f] hover:border-[#C6963C] text-stone-200"
                             : "bg-white border-[#dde1e4] hover:border-[#C6963C] text-slate-800"
-                        }`}
+                          }`}
                       >
                         <span className="font-semibold font-mono text-[#C6963C]">{s.title}</span>
                         <span className="font-mono leading-relaxed opacity-95">{s.q}</span>
@@ -781,16 +776,15 @@ export default function App() {
 
                     const isUser = msg.role === "user";
                     return (
-                      <div 
-                        key={index} 
+                      <div
+                        key={index}
                         className={`flex flex-col ${isUser ? "items-end" : "items-start"}`}
                       >
-                        <div 
-                          className={`max-w-2xl px-5 py-4 rounded-lg text-sm leading-relaxed ${
-                            isUser 
-                              ? "bubble-user" 
+                        <div
+                          className={`max-w-2xl px-5 py-4 rounded-lg text-sm leading-relaxed ${isUser
+                              ? "bubble-user"
                               : theme === "dark" ? "bubble-assistant-dark" : "bubble-assistant-light"
-                          }`}
+                            }`}
                         >
                           {/* Color-Coded Route Badge (Fix 5.2) */}
                           {!isUser && msg.route && msg.route !== "system" && (
@@ -823,14 +817,14 @@ export default function App() {
 
                           {/* Inset Reasoning logs sub-panel (Fix 5.3) */}
                           {!isUser && msg.route && msg.route !== "system" && (
-                            <ReasoningBlock 
-                              msg={msg} 
+                            <ReasoningBlock
+                              msg={msg}
                               theme={theme}
-                              isRawSqlPermitted={role === "analyst" || role === "supervisor"} 
+                              isRawSqlPermitted={role === "analyst" || role === "supervisor"}
                             />
                           )}
                         </div>
-                        
+
                         <span className="text-[10px] text-slate-400 mt-1 mx-2">
                           {msg.timestamp}
                         </span>
@@ -839,13 +833,12 @@ export default function App() {
                   })}
                 </div>
               )}
-              
+
               {loading && (
                 <div className="flex flex-col items-start animate-pulse">
                   {/* Sized placeholder bubble to prevent layout jump (Fix 5.6) */}
-                  <div className={`w-80 h-32 px-5 py-4 rounded-lg flex flex-col justify-between ${
-                    theme === "dark" ? "bubble-assistant-dark" : "bubble-assistant-light"
-                  }`}>
+                  <div className={`w-80 h-32 px-5 py-4 rounded-lg flex flex-col justify-between ${theme === "dark" ? "bubble-assistant-dark" : "bubble-assistant-light"
+                    }`}>
                     <div className="h-4 bg-slate-700 bg-opacity-35 rounded w-1/3"></div>
                     <div className="h-3 bg-slate-700 bg-opacity-35 rounded w-full"></div>
                     <div className="h-3 bg-slate-700 bg-opacity-35 rounded w-5/6"></div>
@@ -857,17 +850,17 @@ export default function App() {
                   </div>
                 </div>
               )}
-              
+
               <div ref={threadEndRef} />
             </div>
           </main>
 
           {/* COMPOSER INPUT CONTAINER */}
-          <footer 
-            className="shrink-0 p-4 border-t" 
-            style={{ 
-              backgroundColor: theme === "dark" ? "#0b1b2f" : "#FFFFFF", 
-              borderColor: theme === "dark" ? "#1e3a5f" : "#dde1e4" 
+          <footer
+            className="shrink-0 p-4 border-t"
+            style={{
+              backgroundColor: theme === "dark" ? "#0b1b2f" : "#FFFFFF",
+              borderColor: theme === "dark" ? "#1e3a5f" : "#dde1e4"
             }}
           >
             <div className="max-w-3xl mx-auto flex items-center gap-3">
@@ -875,36 +868,34 @@ export default function App() {
                 type="button"
                 onClick={toggleMic}
                 disabled={!speechSupported}
-                className={`p-3 rounded-full border transition-all ${
-                  isListening 
-                    ? "bg-red-100 border-red-500 text-red-600 animate-pulse" 
+                className={`p-3 rounded-full border transition-all ${isListening
+                    ? "bg-red-100 border-red-500 text-red-600 animate-pulse"
                     : "bg-slate-50 border-slate-300 text-slate-600 hover:bg-slate-100"
-                }`}
+                  }`}
                 title={speechSupported ? (isListening ? "Listening... click to stop" : "Voice input") : "Mic not supported"}
                 style={{ opacity: speechSupported ? 1 : 0.5 }}
               >
                 <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-                  <path d="M12 1v11M19 10v2a7 7 0 0 1-14 0v-2M12 23v-4" strokeLinecap="round"/>
-                  <rect x="9" y="5" width="6" height="10" rx="3" fill={isListening ? "currentColor" : "none"}/>
+                  <path d="M12 1v11M19 10v2a7 7 0 0 1-14 0v-2M12 23v-4" strokeLinecap="round" />
+                  <rect x="9" y="5" width="6" height="10" rx="3" fill={isListening ? "currentColor" : "none"} />
                 </svg>
               </button>
 
               <input
                 type="text"
                 placeholder={
-                  language === "kn" 
-                    ? "ಇಲ್ಲಿ ಅಪರಾಧ ಪ್ರಶ್ನೆಯನ್ನು ಟೈಪ್ ಮಾಡಿ... (ಕಳುಹಿಸಲು Enter ಒತ್ತಿ)" 
+                  language === "kn"
+                    ? "ಇಲ್ಲಿ ಅಪರಾಧ ಪ್ರಶ್ನೆಯನ್ನು ಟೈಪ್ ಮಾಡಿ... (ಕಳುಹಿಸಲು Enter ಒತ್ತಿ)"
                     : "Type your query here... (Press Enter to send)"
                 }
                 value={inputVal}
                 onChange={(e) => setInputVal(e.target.value)}
                 onKeyDown={handleKeyDown}
                 disabled={loading}
-                className={`flex-1 rounded-md px-4 py-3 text-sm focus:outline-none border ${
-                  theme === "dark" 
-                    ? "bg-[#0f2745] border-[#1e3a5f] focus:border-[#C6963C] text-stone-200 focus:bg-[#0b1f3a]" 
+                className={`flex-1 rounded-md px-4 py-3 text-sm focus:outline-none border ${theme === "dark"
+                    ? "bg-[#0f2745] border-[#1e3a5f] focus:border-[#C6963C] text-stone-200 focus:bg-[#0b1f3a]"
                     : "bg-slate-50 border-slate-300 focus:border-stone-500 text-slate-800 focus:bg-white"
-                }`}
+                  }`}
               />
 
               <button
@@ -922,17 +913,16 @@ export default function App() {
       {/* SUPERVISOR AUDIT LOGS MODAL DRAWER */}
       {showAuditDrawer && (
         <div className="fixed inset-0 z-50 flex justify-end bg-black bg-opacity-60 transition-opacity duration-300">
-          <div 
-            className={`w-[600px] h-full flex flex-col shadow-2xl overflow-hidden p-6 ${
-              theme === "dark" ? "bg-[#0b1b2f] text-stone-200 border-l border-[#1e3a5f]" : "bg-white text-slate-800 border-l border-[#dde1e4]"
-            }`}
+          <div
+            className={`w-[600px] h-full flex flex-col shadow-2xl overflow-hidden p-6 ${theme === "dark" ? "bg-[#0b1b2f] text-stone-200 border-l border-[#1e3a5f]" : "bg-white text-slate-800 border-l border-[#dde1e4]"
+              }`}
           >
             <div className="flex items-center justify-between border-b pb-4 border-slate-700">
               <div>
                 <h2 className="text-sm font-semibold tracking-wide text-[#C6963C] font-mono uppercase">Query Transaction Audits</h2>
                 <p className="text-[10px] text-slate-400 mt-1">compliance, logging, and security database tables (audit.db)</p>
               </div>
-              <button 
+              <button
                 onClick={() => setShowAuditDrawer(false)}
                 className="p-1 rounded hover:bg-slate-800 text-slate-400 font-mono text-sm"
               >
@@ -1050,7 +1040,7 @@ function formatMessage(text) {
           {sections.summary.map((l, idx) => <span key={idx}>{parseBold(l)} </span>)}
         </div>
       )}
-      
+
       {/* 2. Key Findings Section */}
       {sections.findings.length > 0 && (
         <div className="space-y-2">
@@ -1060,7 +1050,7 @@ function formatMessage(text) {
           {renderList(sections.findings)}
         </div>
       )}
-      
+
       {/* 3. Details Section */}
       {sections.details.length > 0 && (
         <div className="space-y-2 pt-2 border-t border-slate-700 border-opacity-35">
@@ -1081,11 +1071,11 @@ function formatMessage(text) {
 // ---------------------------------------------------------------------------
 function SqlResultsTable({ results }) {
   if (!Array.isArray(results) || results.length === 0) return null;
-  
+
   const maxRows = 10;
   const displayRows = results.slice(0, maxRows);
   const hasMore = results.length > maxRows;
-  
+
   return (
     <div className="mt-3 overflow-x-auto border border-slate-700 rounded bg-[#081628] bg-opacity-65 p-2.5">
       <span className="text-[9px] uppercase tracking-wider text-[#C6963C] font-mono block mb-1.5">
@@ -1096,8 +1086,8 @@ function SqlResultsTable({ results }) {
           {displayRows.map((row, rIdx) => {
             const isEven = rIdx % 2 === 0;
             return (
-              <tr 
-                key={rIdx} 
+              <tr
+                key={rIdx}
                 className={isEven ? "bg-[#0b1f3a] bg-opacity-40" : "bg-transparent"}
               >
                 {Array.isArray(row) ? (
@@ -1165,12 +1155,12 @@ function ForecastChart({ data, theme }) {
   const maxCount = Math.max(...counts, 1);
   const minCount = Math.min(...counts, 0);
   const range = maxCount - minCount;
-  
+
   const chartHeight = 100;
   const chartWidth = 360;
   const paddingX = 40;
   const paddingY = 15;
-  
+
   const getCoords = (index, value) => {
     const x = paddingX + (index * (chartWidth - 2 * paddingX)) / (points.length - 1);
     const y = chartHeight - paddingY - ((value - minCount) * (chartHeight - 2 * paddingY)) / range;
@@ -1179,27 +1169,26 @@ function ForecastChart({ data, theme }) {
 
   const histCoords = data.historical.map((p, i) => getCoords(i, p.count));
   const forecastCoords = data.forecast.map((p, i) => getCoords(data.historical.length + i, p.count));
-  
+
   const histLinePath = histCoords.reduce((path, p, i) => path + (i === 0 ? `M ${p.x} ${p.y}` : ` L ${p.x} ${p.y}`), "");
-  
+
   const lastHist = histCoords[histCoords.length - 1];
-  const forecastLinePath = lastHist 
-    ? forecastCoords.reduce((path, p) => path + ` L ${p.x} ${p.y}`, `M ${lastHist.x} ${lastHist.y}`) 
+  const forecastLinePath = lastHist
+    ? forecastCoords.reduce((path, p) => path + ` L ${p.x} ${p.y}`, `M ${lastHist.x} ${lastHist.y}`)
     : forecastCoords.reduce((path, p, i) => path + (i === 0 ? `M ${p.x} ${p.y}` : ` L ${p.x} ${p.y}`), "");
 
   return (
-    <div className={`mt-3 p-4 rounded-lg border text-[10px] font-mono shadow-sm ${
-      theme === "dark" ? "bg-[#0b1628] border-[#1e3a5f]" : "bg-slate-50 border-slate-200"
-    }`}>
+    <div className={`mt-3 p-4 rounded-lg border text-[10px] font-mono shadow-sm ${theme === "dark" ? "bg-[#0b1628] border-[#1e3a5f]" : "bg-slate-50 border-slate-200"
+      }`}>
       <span className="font-semibold block mb-2 text-[#C6963C]">Time-Series Projection Dashboard</span>
       <svg viewBox={`0 0 ${chartWidth} ${chartHeight}`} className="w-full">
         <line x1={paddingX} y1={paddingY} x2={chartWidth - paddingX} y2={paddingY} stroke="#44516840" strokeWidth="0.5" />
         <line x1={paddingX} y1={chartHeight / 2} x2={chartWidth - paddingX} y2={chartHeight / 2} stroke="#44516840" strokeWidth="0.5" />
         <line x1={paddingX} y1={chartHeight - paddingY} x2={chartWidth - paddingX} y2={chartHeight - paddingY} stroke="#44516840" strokeWidth="0.5" />
-        
+
         <text x={10} y={paddingY + 4} fill="#8391A3">{Math.round(maxCount)}</text>
         <text x={10} y={chartHeight - paddingY + 4} fill="#8391A3">{Math.round(minCount)}</text>
-        
+
         {histLinePath && <path d={histLinePath} fill="none" stroke="#2563EB" strokeWidth="2.5" />}
         {forecastLinePath && <path d={forecastLinePath} fill="none" stroke="#C6963C" strokeWidth="2.5" strokeDasharray="4 3" />}
 
@@ -1269,9 +1258,8 @@ function NetworkGraph({ data, theme }) {
   };
 
   return (
-    <div className={`mt-3 p-4 rounded-lg border text-[10px] font-mono select-none shadow-sm ${
-      theme === "dark" ? "bg-[#0b1628] border-[#1e3a5f]" : "bg-slate-50 border-slate-200"
-    }`}>
+    <div className={`mt-3 p-4 rounded-lg border text-[10px] font-mono select-none shadow-sm ${theme === "dark" ? "bg-[#0b1628] border-[#1e3a5f]" : "bg-slate-50 border-slate-200"
+      }`}>
       <div className="flex items-center justify-between mb-2">
         <span className="font-semibold text-[#C6963C]">Offender Relationship Network Graph</span>
         {selectedNode && (
@@ -1409,13 +1397,13 @@ function ReasoningBlock({ msg, theme, isRawSqlPermitted }) {
 
   return (
     <div className="mt-3 border-t pt-2 border-slate-600 border-opacity-35">
-      <button 
-        type="button" 
+      <button
+        type="button"
         onClick={() => setOpen(!open)}
         className="text-[11px] font-semibold text-slate-400 hover:text-slate-200 flex items-center gap-1.5 focus:outline-none"
       >
         <span>{open ? "▼ Hide logic details" : "▶ Show explainability logic"}</span>
-        <span 
+        <span
           className="text-[9px] uppercase tracking-wider px-1.5 py-0.5 rounded font-mono"
           style={{
             backgroundColor:
@@ -1429,9 +1417,8 @@ function ReasoningBlock({ msg, theme, isRawSqlPermitted }) {
       </button>
 
       {open && (
-        <div className={`mt-2 p-3 text-[10px] font-mono border space-y-2.5 ${
-          theme === "dark" ? "reasoning-container-dark" : "reasoning-container-light"
-        }`}>
+        <div className={`mt-2 p-3 text-[10px] font-mono border space-y-2.5 ${theme === "dark" ? "reasoning-container-dark" : "reasoning-container-light"
+          }`}>
           <div className="flex justify-between items-center text-[9px] text-slate-400">
             <span>Query Pipeline:</span>
             <span className="font-bold">{msg.route.toUpperCase()} ROUTER</span>
