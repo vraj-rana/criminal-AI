@@ -21,14 +21,15 @@ try:
     from llm import (
         summarize_sql_result, 
         summarize_graph_result, 
-        summarize_hybrid_result, 
+        summarize_hybrid_result,
+        summarize_network_result,
         translate_to_english,
         ask_gemini
     )
     from graph_agent import graph_rag, build_context
     from hybrid_agent import hybrid_search
     from case_lookup import get_case_id
-    from graph_analysis import analyze_case
+    from graph_analysis import analyze_case, detect_criminal_clusters
     HAS_BACKEND_DEPS = True
 except Exception as e:
     print(f"Warning: Backend dependencies missing or failed to import ({e}). Falling back to mock modes.", file=sys.stderr)
@@ -152,15 +153,21 @@ def get_mock_response(question: str, route: str, role: str, language: str):
             "This is a simple trend projection, not a black-box prediction."
         )
         answer = (
-            "Based on the historical data, the forecast indicates a slight upward trend in Burglary cases in Mysuru. "
-            "Estimated counts for the next 3 months: July 2026: 28.50, August 2026: 29.75, September 2026: 31.00 cases. "
-            "Methodology: Simple linear trend projection."
+            "**Summary:** The caseload forecast indicates a slight upward trend in Burglary cases in Mysuru.\n\n"
+            "**Key Findings:**\n"
+            "- **July 2026 Caseload**: Projected at 28.50 cases.\n"
+            "- **August 2026 Caseload**: Projected at 29.75 cases.\n"
+            "- **September 2026 Caseload**: Projected at 31.00 cases.\n\n"
+            "**Details:**\n"
+            "Projections utilize linear trend calculations over 12 months of historical crime master data."
         )
         if language == "kn":
             answer = (
-                "[Kannada Mock Output] Based on historical data, the forecast indicates a slight upward trend in Burglary cases in Mysuru. "
-                "Estimated counts: July 2026: 28.50, August 2026: 29.75, September 2026: 31.00 cases. "
-                "Methodology: Simple linear trend projection."
+                "**ಸಾರಾಂಶ:** ಮೈಸೂರಿನಲ್ಲಿ ಕಳ್ಳತನ ಪ್ರಕರಣಗಳಲ್ಲಿ ಸ್ವಲ್ಪ ಏರಿಕೆಯಾಗುವ ಪ್ರವೃತ್ತಿಯನ್ನು ಅಂದಾಜಿಸಲಾಗಿದೆ.\n\n"
+                "**ಮುಖ್ಯಾಂಶಗಳು:**\n"
+                "- **ಜುಲೈ 2026 ಪ್ರಕರಣಗಳು**: 28.50 ಪ್ರಕರಣಗಳು.\n"
+                "- **ಆಗಸ್ಟ್ 2026 ಪ್ರಕರಣಗಳು**: 29.75 ಪ್ರಕರಣಗಳು.\n"
+                "- **ಸೆಪ್ಟೆಂಬರ್ 2026 ಪ್ರಕರಣಗಳು**: 31.00 ಪ್ರಕರಣಗಳು."
             )
             explanation = "Kannada Mock: Linear regression projection calculation."
             
@@ -188,14 +195,47 @@ def get_mock_response(question: str, route: str, role: str, language: str):
                 ]
             }
         }
-        
-    # 2. Repeat Offender Query (Case KA-19-2026-00456) or associations
-    elif "00456" in q or "repeat offender" in q or "associate" in q or "network" in q:
-        answer = "Based on the investigation context, 3 prior associations were found for the accused linked to Case KA-19-2026-00456. Ramesh Kumar (Primary Accused) has a history of prior arrests in Mysuru and Hassan for organized burglaries. Two known associates, Suresh Gowda and Anil Hegde, are also linked to this case network."
+
+    # 2. Network / Community Mock
+    elif route == "network" or "organized crime" in q or "gang" in q or "crew" in q:
+        answer = (
+            "**Summary:** Yes, modularity-based community detection identified 3 active criminal clusters operating across police jurisdictions.\n\n"
+            "**Key Findings:**\n"
+            "- **Cluster 1 (Theft Crew)**: Contains 8 members who share 12 prior burglary cases.\n"
+            "- **Cluster 2 (Crime Syndicate)**: Active in Mandya with 5 linked suspects.\n"
+            "- **Cluster 3 (Trafficking Ring)**: Connected to 4 distinct police stations."
+        )
         if language == "kn":
             answer = (
-                "[Kannada Mock Output] Based on the investigation context, 3 prior associations were found for Case KA-19-2026-00456. "
-                "Accused Ramesh Kumar has prior arrests in Mysuru and Hassan. Associates Suresh Gowda and Anil Hegde are linked."
+                "**ಸಾರಾಂಶ:** ಹೌದು, ಸಮುದಾಯ ಪತ್ತೆ ಹಚ್ಚುವಿಕೆ ಮೂಲಕ ಜಿಲ್ಲೆಯಲ್ಲಿ 3 ಸಕ್ರಿಯ ಅಪರಾಧ ಜಾಲಗಳನ್ನು ಗುರುತಿಸಲಾಗಿದೆ.\n\n"
+                "**ಮುಖ್ಯಾಂಶಗಳು:**\n"
+                "- **ಜಾಲ 1 (ಕಳ್ಳತನದ ಗುಂಪು)**: 12 ಪೂರ್ವ ಪ್ರಕರಣಗಳನ್ನು ಹೊಂದಿರುವ 8 ಸದಸ್ಯರನ್ನು ಒಳಗೊಂಡಿದೆ.\n"
+                "- **ಜಾಲ 2 (ಅಪರಾಧ ಜಾಲ)**: ಮಂಡ್ಯದಲ್ಲಿ 5 ಲಿಂಕ್ ಹೊಂದಿರುವ ಶಂಕಿತರನ್ನು ಒಳಗೊಂಡಿದೆ."
+            )
+        return {
+            "question": question,
+            "route": "network",
+            "answer": answer,
+            "sql": None,
+            "sql_results": None,
+            "context": "Modularity detection: Cluster 1 has size 8, Cluster 2 has size 5.",
+            "graph_data": MOCK_GRAPH_DATA
+        }
+        
+    # 3. Repeat Offender Query (Case KA-19-2026-00456) or associations
+    elif "00456" in q or "repeat offender" in q or "associate" in q or "network" in q:
+        answer = (
+            "**Summary:** 3 prior associations were found for the accused linked to Case KA-19-2026-00456.\n\n"
+            "**Key Findings:**\n"
+            "- **Ramesh Kumar (Suspect)**: Flagged High risk due to 14 cases and 7 known associates.\n"
+            "- **Suresh Gowda (Lookout)**: 3 prior cases, Medium risk scoring.\n"
+            "- **Anil Hegde (Receiver)**: 2 prior cases, Medium risk scoring."
+        )
+        if language == "kn":
+            answer = (
+                "**ಸಾರಾಂಶ:** ಪ್ರಕರಣ KA-19-2026-00456 ಕ್ಕೆ ಸಂಬಂಧಿಸಿದ ಆರೋಪಿಗಳಿಗೆ 3 ಹಿಂದಿನ ಸಂಬಂಧಗಳು ಕಂಡುಬಂದಿವೆ.\n\n"
+                "**ಮುಖ್ಯಾಂಶಗಳು:**\n"
+                "- **ರಮೇಶ್ ಕುಮಾರ್ (ಮುಖ್ಯ ಆರೋಪಿ)**: 14 ಪ್ರಕರಣಗಳು ಮತ್ತು 7 ಸಹಚರರೊಂದಿಗೆ ಉನ್ನತ ಅಪಾಯದ ಶ್ರೇಣಿಯಲ್ಲಿದ್ದಾನೆ."
             )
             
         sql_query = "SELECT DISTINCT CM.CrimeNo, PI.FullName, PI.IsRepeatOffender FROM Accused A JOIN CaseMaster CM ON A.CaseMasterID = CM.CaseMasterID JOIN PersonIdentity PI ON A.PersonIdentityID = PI.PersonIdentityID WHERE CM.CaseNo = 'KA-19-2026-00456' AND PI.IsRepeatOffender = 1;"
@@ -209,11 +249,20 @@ def get_mock_response(question: str, route: str, role: str, language: str):
             "graph_data": MOCK_GRAPH_DATA
         }
     
-    # 3. Default / Generic Query
+    # 4. Default / Generic Query
     else:
-        answer = f"Investigation context for '{question}' was retrieved from the crime database. Suspect Ramesh Kumar has been linked to the crime ring through common phone logs. Source: Accused records, Case: KA-19-2026-00456."
+        answer = (
+            "**Summary:** Database search retrieved details matching suspect Ramesh Kumar.\n\n"
+            "**Key Findings:**\n"
+            "- **Linked Ring**: Suspect is connected through common phone log lines.\n"
+            "- **Case Association**: Case KA-19-2026-00456 (Hebbal PS)."
+        )
         if language == "kn":
-            answer = f"[Kannada Mock Output] Details for '{question}' retrieved. Ramesh Kumar has log links to the crime group. Source: Accused records, Case: KA-19-2026-00456."
+            answer = (
+                "**ಸಾರಾಂಶ:** ನಿಮ್ಮ ಪ್ರಶ್ನೆಗೆ ತನಿಖೆಯ ವಿವರಗಳನ್ನು ಪಡೆಯಲಾಗಿದೆ.\n\n"
+                "**ಮುಖ್ಯಾಂಶಗಳು:**\n"
+                "- **ರಮೇಶ್ ಕುಮಾರ್**: ಫೋನ್ ದಾಖಲೆಗಳ ಮೂಲಕ ಕಳ್ಳತನ ಜಾಲಕ್ಕೆ ಲಿಂಕ್ ಹೊಂದಿದ್ದಾನೆ."
+            )
             
         return {
             "question": question,
@@ -327,12 +376,12 @@ User Question:
 {question}
 
 Instructions:
-- Provide a detailed summary of the forecasting trend.
+- Provide a detailed summary of the forecasting trend using our standard Markdown Summary/Key Findings/Details format.
+- Keep the overall response brief (under 180 words).
 - State clearly that this is a simple linear trend projection, not a black-box prediction.
-- Mention the forecasted values clearly.
 """
             if language == "kn":
-                prompt += "\n- IMPORTANT: Respond in Kannada (Kannada) language only. Translate the entire report completely to Kannada."
+                prompt += "\n- IMPORTANT: Respond in Kannada (Kannada) language only. Follow the standard Kannada Markdown header format."
                 
             answer = ask_gemini(prompt)
             sql_executed = f"SELECT strftime('%Y-%m', CM.CrimeRegisteredDate) FROM CaseMaster JOIN CrimeSubHead CS ON CM.CrimeMinorHeadID = CS.CrimeSubHeadID JOIN Unit U ON CM.PoliceStationID = U.UnitID WHERE CS.CrimeHeadName LIKE '{crime_type}' AND U.UnitName LIKE '{district}' GROUP BY month;"
@@ -423,6 +472,54 @@ Instructions:
                 "graph_data": build_dynamic_graph(candidate_case_ids)
             }
             log_query(question, route, sql_executed, role, "Anonymous")
+            return res
+
+        # E. NETWORK / COMMUNITY ROUTE (Fix 2)
+        elif route == "network":
+            clusters = detect_criminal_clusters()
+            context_lines = []
+            for c in clusters[:5]:
+                context_lines.append(
+                    f"Cluster ID {c['cluster_id']}: {c['size']} members, "
+                    f"Total Combined Prior Cases: {c['total_prior_cases']}, "
+                    f"Distinct Police Stations: {c['distinct_stations']}, "
+                    f"Avg Pairwise Shared Cases: {c['avg_shared_cases']}. "
+                    f"Members: {', '.join(c['members'][:10])}"
+                )
+            context = "\n".join(context_lines)
+            answer = summarize_network_result(question, context, history=history_list, language=language)
+            
+            # Find case IDs linked to top cluster members to draw dynamic network graph
+            case_ids = []
+            if clusters:
+                from entity_lookup import entity_lookup
+                from graph_utils import G
+                top_cluster = clusters[0]
+                member_node_ids = []
+                for m_name in top_cluster["members"]:
+                    for node_id, ent in entity_lookup.items():
+                        if node_id.startswith("PERSON_") and ent.get("attributes", {}).get("name") == m_name:
+                            member_node_ids.append(node_id)
+                            break
+                
+                seen_cases = set()
+                for node_id in member_node_ids[:5]:
+                    if node_id in G:
+                        for neighbor in G.neighbors(node_id):
+                            if neighbor.startswith("CASE_"):
+                                seen_cases.add(neighbor)
+                case_ids = list(seen_cases)
+            
+            res = {
+                "question": question,
+                "route": route,
+                "answer": answer,
+                "sql": None,
+                "sql_results": None,
+                "context": context,
+                "graph_data": build_dynamic_graph(case_ids)
+            }
+            log_query(question, route, None, role, "Anonymous")
             return res
             
     except Exception as e:

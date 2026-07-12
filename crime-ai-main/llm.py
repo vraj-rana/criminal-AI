@@ -1,4 +1,6 @@
 import os
+import time
+import sys
 from dotenv import load_dotenv
 from google import genai
 
@@ -13,19 +15,23 @@ client = genai.Client(
 )
 
 # -----------------------------------------------------
-# Generic Gemini Call
+# Generic Gemini Call (Fix Quota Failover)
 # -----------------------------------------------------
 
-import time
-
 def ask_gemini(prompt):
-
     print("=" * 80)
     print("Prompt length:", len(prompt))
     print("=" * 80)
 
     # Multi-model pool to handle free-tier daily quota exhaustion
-    models_to_try = ["gemini-2.5-flash", "gemini-1.5-flash", "gemini-1.5-pro"]
+    models_to_try = [
+        "gemini-2.5-flash", 
+        "gemini-2.0-flash", 
+        "gemini-2.5-pro", 
+        "gemini-2.5-flash-lite", 
+        "gemini-flash-latest", 
+        "gemini-pro-latest"
+    ]
     last_error = None
 
     for model_name in models_to_try:
@@ -38,42 +44,84 @@ def ask_gemini(prompt):
             return response.text.strip()
         except Exception as e:
             last_error = e
-            print(f"Model {model_name} failed (possibly quota exhausted): {e}")
-            # Try next model immediately
+            print(f"Model {model_name} failed (possibly quota exhausted): {e}", file=sys.stderr)
             continue
 
-    # If all models in the pool failed, raise error to trigger safety mock fallback
-    print(f"All models in fallback pool exhausted. Last error: {last_error}")
+    print(f"All models in fallback pool exhausted. Last error: {last_error}", file=sys.stderr)
     raise last_error
 
-    raise Exception("Gemini unavailable after multiple retries.")
+# -----------------------------------------------------
+# Translation Helpers
+# -----------------------------------------------------
 
+def translate_to_english(text):
+    prompt = f"""
+Translate the following Kannada text into plain English. 
+Return ONLY the English translation, no other conversational filler.
+
+Text to translate:
+{text}
+"""
+    return ask_gemini(prompt)
 
 # -----------------------------------------------------
-# Helper: Format Conversation History
+# History Formatter
 # -----------------------------------------------------
 
 def format_history(history):
     if not history:
         return ""
-    history_str = "\nRecent Conversation History:\n"
+    
+    formatted = "Conversation History Context:\n"
     for turn in history:
-        role = "User" if turn.get("role") == "user" else "Assistant"
-        content = turn.get("content", "")
-        history_str += f"{role}: {content}\n"
-    return history_str
+        role_label = "Investigator" if turn.get("role") == "user" else "Assistant"
+        formatted += f"{role_label}: {turn.get('content')}\n"
+    formatted += "\n"
+    return formatted
+
 
 # -----------------------------------------------------
-# Helper: Translate Kannada to English
+# Structured Prompt Template Builder (Fix 4)
 # -----------------------------------------------------
 
-def translate_to_english(question):
-    prompt = f"Translate the following Kannada crime query into clear standard English for database querying. Return ONLY the English translation with no other text. Keep name spellings phonetic. If the text is already in English, return it unchanged:\n{question}"
-    try:
-        return ask_gemini(prompt)
-    except Exception as e:
-        print(f"Translation error: {e}. Using original question.")
-        return question
+STRUCTURED_INSTRUCTIONS = """
+Your response MUST strictly follow this exact Markdown format. Do not wrap the entire response in a code fence:
+
+**Summary:** <one or two sentence plain-language answer>
+
+**Key Findings:**
+- <finding 1, with specific numbers, names, or metrics inline — NEVER be vague>
+- <finding 2, with specific numbers, names, or metrics inline>
+- <finding 3, up to 5 max, no filler bullets>
+
+**Details:**
+<1-2 short paragraphs only if genuinely needed beyond the bullets — omit this section completely if the bullet points already cover the findings>
+
+Rules:
+- Be concise. Keep the total word count under 180 words.
+- Do not repeat the user's question back. Do not write a closing summary paragraph.
+- Every claim must carry its number, percentage, count, name, or metric inline. Do not use generic phrases like "a high risk" or "multiple cases" without naming the exact numbers.
+"""
+
+KANNADA_STRUCTURED_INSTRUCTIONS = """
+Your response MUST strictly follow this exact Kannada Markdown format. Do not wrap the entire response in a code fence:
+
+**ಸಾರಾಂಶ:** <ಒಂದು ಅಥವಾ ಎರಡು ವಾಕ್ಯಗಳಲ್ಲಿ ಸರಳ ಉತ್ತರ>
+
+**ಮುಖ್ಯಾಂಶಗಳು:**
+- <ಆರೋಪಿಯ ಹೆಸರು, ಪ್ರಕರಣ ಸಂಖ್ಯೆ ಅಥವಾ ನಿರ್ದಿಷ್ಟ ಸಂಖ್ಯೆಗಳನ್ನು ಒಳಗೊಂಡಿರುವ ಮುಖ್ಯಾಂಶ 1 — ಎಂದಿಗೂ ಅಸ್ಪಷ್ಟವಾಗಿರಬಾರದು>
+- <ನಿರ್ದಿಷ್ಟ ಸಂಖ್ಯೆಗಳನ್ನು ಒಳಗೊಂಡಿರುವ ಮುಖ್ಯಾಂಶ 2>
+- <ಮುಖ್ಯಾಂಶ 3, ಗರಿಷ್ಠ 5 ಬುಲೆಟ್‌ಗಳು ಮಾತ್ರ>
+
+**ವಿವರಗಳು:**
+<ಬುಲೆಟ್ ಪಾಯಿಂಟ್‌ಗಳ ಹೊರತಾಗಿ ಅಗತ್ಯವಿದ್ದರೆ ಮಾತ್ರ 1-2 ಸಣ್ಣ ಪ್ಯಾರಾಗ್ರಾಫ್ ವಿವರಣೆ — ಬುಲೆಟ್ ಪಾಯಿಂಟ್‌ಗಳಲ್ಲೇ ಎಲ್ಲ ಮಾಹಿತಿ ಇದ್ದರೆ ಈ ವಿಭಾಗವನ್ನು ಸಂಪೂರ್ಣವಾಗಿ ಬಿಟ್ಟುಬಿಡಿ>
+
+Rules:
+- Be concise. Keep the total word count under 180 words.
+- Respond completely in Kannada.
+- Every claim must carry its number, percentage, count, name, or metric inline. Do not use vague terms.
+"""
+
 
 # -----------------------------------------------------
 # SQL Result Summarization
@@ -81,9 +129,7 @@ def translate_to_english(question):
 
 def summarize_sql_result(question, sql, rows, history=None, language="en"):
     history_str = format_history(history)
-    lang_inst = ""
-    if language == "kn":
-        lang_inst = "\n- IMPORTANT: Respond in Kannada (Kannada) language only. Translate your final answer completely to Kannada."
+    struct_inst = KANNADA_STRUCTURED_INSTRUCTIONS if language == "kn" else STRUCTURED_INSTRUCTIONS
 
     prompt = f"""
 You are an expert crime data analyst.
@@ -100,10 +146,7 @@ SQL Result:
 {rows}
 
 Instructions:
-- Summarize the SQL result in a clean, visual, and highly structured manner.
-- Keep the overall length moderate (mid-length, under 150 words).
-- Use clear headers, bold keywords, and bullet points (e.g. **Total Cases**, **Investigative Breakdown**).
-- Do not explain SQL syntax unless relevant. Keep it clean and highly readable.{lang_inst}
+{struct_inst}
 """
 
     return ask_gemini(prompt)
@@ -115,9 +158,7 @@ Instructions:
 
 def summarize_graph_result(question, context, history=None, language="en"):
     history_str = format_history(history)
-    lang_inst = ""
-    if language == "kn":
-        lang_inst = "\n- IMPORTANT: Respond in Kannada (Kannada) language only. Translate your final answer completely to Kannada."
+    struct_inst = KANNADA_STRUCTURED_INSTRUCTIONS if language == "kn" else STRUCTURED_INSTRUCTIONS
 
     prompt = f"""
 You are an expert criminal network intelligence analyst.
@@ -131,10 +172,7 @@ Retrieved Context:
 {context}
 
 Instructions:
-- Summarize the graph associations in a clean, visual, and highly structured format.
-- Keep the response mid-length (under 150 words).
-- Group key details under clear bold headings (e.g. **Suspect Profile**, **Relational Links**, **Modus Operandi**).
-- Use clean bullet points. Avoid wall-of-text paragraphs.{lang_inst}
+{struct_inst}
 """
 
     return ask_gemini(prompt)
@@ -147,13 +185,11 @@ Instructions:
 def summarize_hybrid_result(question, context, history=None, language="en"):
     if not context.strip():
         if language == "kn":
-            return "No matching cases were found for the query."
-        return "No matching cases were found for the query."
+            return "**ಸಾರಾಂಶ:** ಪ್ರಕರಣ ಕಂಡುಬಂದಿಲ್ಲ."
+        return "**Summary:** No matching cases were found."
 
     history_str = format_history(history)
-    lang_inst = ""
-    if language == "kn":
-        lang_inst = "\n- IMPORTANT: Respond in Kannada (Kannada) language only. Translate your final investigation report completely to Kannada."
+    struct_inst = KANNADA_STRUCTURED_INSTRUCTIONS if language == "kn" else STRUCTURED_INSTRUCTIONS
 
     prompt = f"""
 You are a senior criminal intelligence investigator.
@@ -169,12 +205,34 @@ Investigation Context:
 {context}
 
 Instructions:
-- Write a clean, visual, and structured mid-length (under 150 words) investigation brief.
-- Never invent names or details.
-- Use bullet points and bold section headers (e.g. **Key Suspects**, **Case Narrative**, **Next Steps**).
-- Ensure the layout is highly readable at a glance. Avoid long paragraphs.{lang_inst}
+{struct_inst}
+"""
 
-Investigation Report:
+    return ask_gemini(prompt)
+
+
+# -----------------------------------------------------
+# Network Result Summarization (Fix 2)
+# -----------------------------------------------------
+
+def summarize_network_result(question, context, history=None, language="en"):
+    history_str = format_history(history)
+    struct_inst = KANNADA_STRUCTURED_INSTRUCTIONS if language == "kn" else STRUCTURED_INSTRUCTIONS
+
+    prompt = f"""
+You are a senior analyst mapping organized crime communities and gangs.
+
+{history_str}
+
+User Question:
+{question}
+
+Community Detection Clusters Context:
+{context}
+
+Instructions:
+{struct_inst}
+- Cite specific cluster numbers, counts of members, distinct stations, and prior cases.
 """
 
     return ask_gemini(prompt)

@@ -89,6 +89,8 @@ def build_case_context(case_analysis):
             f"Known Associates : "
             f"{person['known_associates']}\n"
         )
+        if "risk_score" in person:
+            context += f"Risk Score : {person['risk_score']} ({person['risk_band']})\n"
 
         context += "\n"
 

@@ -287,7 +287,6 @@ export default function App() {
       timestamp: new Date().toLocaleTimeString()
     };
 
-    // Update active chat title dynamically if this is the first user query
     let updatedChats = chats.map((c) => {
       if (c.id === activeChatId) {
         const titleText = userMessageText.length > 22 ? userMessageText.slice(0, 22) + "..." : userMessageText;
@@ -381,7 +380,7 @@ export default function App() {
 
       setTimeout(() => {
         const queryLower = userMessageText.toLowerCase();
-        let mockAnswer = "Detailed Analysis: Our database traversal returned search results for suspect Ramesh Kumar, active in burglary operations in Mysuru.";
+        let mockAnswer = "**Summary:** Database search retrieved details matching suspect Ramesh Kumar.\n\n**Key Findings:**\n- **Linked Ring**: Suspect is connected through common phone log lines.\n- **Case Association**: Case KA-19-2026-00456 (Hebbal PS).";
         let mockSql = null;
         let mockContext = "Accused records: Ramesh Kumar (ID: 9871) · Case: KA-19-2026-00456";
         let mockRoute = "graph";
@@ -391,8 +390,8 @@ export default function App() {
         if (queryLower.includes("predict") || queryLower.includes("forecast") || queryLower.includes("next month")) {
           mockRoute = "forecast";
           mockAnswer = language === "kn" 
-            ? "ಮುನ್ಸೂಚನೆ ವರದಿ: ಮೈಸೂರಿನಲ್ಲಿ ಕಳ್ಳತನದ ಪ್ರವೃತ್ತಿ ಏರಿಕೆಯಾಗುತ್ತಿದೆ. ಜುಲೈಗೆ 28.5 ಪ್ರಕರಣಗಳು, ಆಗಸ್ಟ್ಗೆ 29.75 ಪ್ರಕರಣಗಳನ್ನು ಸರಳ ರೇಖೀಯ ಅಂದಾಜಿನ ಮೂಲಕ ಲೆಕ್ಕಹಾಕಲಾಗಿದೆ."
-            : "Detailed Forecast: Linear regression calculations predict a slight upward trend in Burglary cases inside Mysuru. July 2026: 28.50, August 2026: 29.75, and September 2026: 31.00 cases.";
+            ? "**ಸಾರಾಂಶ:** ಮೈಸೂರಿನಲ್ಲಿ ಕಳ್ಳತನ ಪ್ರಕರಣಗಳಲ್ಲಿ ಸ್ವಲ್ಪ ಏರಿಕೆಯಾಗುವ ಪ್ರವೃತ್ತಿಯನ್ನು ಅಂದಾಜಿಸಲಾಗಿದೆ.\n\n**ಮುಖ್ಯಾಂಶಗಳು:**\n- **ಜುಲೈ 2026 ಪ್ರಕರಣಗಳು**: 28.50 ಪ್ರಕರಣಗಳು.\n- **ಆಗಸ್ಟ್ 2026 ಪ್ರಕರಣಗಳು**: 29.75 ಪ್ರಕರಣಗಳು.\n- **ಸೆಪ್ಟೆಂಬರ್ 2026 ಪ್ರಕರಣಗಳು**: 31.00 ಪ್ರಕರಣಗಳು."
+            : "**Summary:** The caseload forecast indicates a slight upward trend in Burglary cases in Mysuru.\n\n**Key Findings:**\n- **July 2026 Caseload**: Projected at 28.50 cases.\n- **August 2026 Caseload**: Projected at 29.75 cases.\n- **September 2026 Caseload**: Projected at 31.00 cases.\n\n**Details:**\nProjections utilize linear trend calculations over 12 months of historical crime master data.";
           mockSql = "SELECT strftime('%Y-%m', CM.CrimeRegisteredDate) as month, COUNT(*) FROM CaseMaster CM GROUP BY month;";
           mockContext = "Forecast methodology: Simple linear regression equation (y = 1.25*x + 14.5).";
           mockForecastData = {
@@ -410,11 +409,32 @@ export default function App() {
               { month: "2026-09", count: 31.0 }
             ]
           };
+        } else if (queryLower.includes("organized crime") || queryLower.includes("gang") || queryLower.includes("crew") || queryLower.includes("network operating")) {
+          mockRoute = "network";
+          mockAnswer = language === "kn"
+            ? "**ಸಾರಾಂಶ:** ಹೌದು, ಸಮುದಾಯ ಪತ್ತೆ ಹಚ್ಚುವಿಕೆ ಮೂಲಕ ಜಿಲ್ಲೆಯಲ್ಲಿ 3 ಸಕ್ರಿಯ ಅಪರಾಧ ಜಾಲಗಳನ್ನು ಗುರುತಿಸಲಾಗಿದೆ.\n\n**ಮುಖ್ಯಾಂಶಗಳು:**\n- **ಜಾಲ 1 (ಕಳ್ಳತನದ ಗುಂಪು)**: 12 ಪೂರ್ವ ಪ್ರಕರಣಗಳನ್ನು ಹೊಂದಿರುವ 8 ಸದಸ್ಯರನ್ನು ಒಳಗೊಂಡಿದೆ.\n- **ಜಾಲ 2 (ಅಪರಾಧ ಜಾಲ)**: ಮಂಡ್ಯದಲ್ಲಿ 5 ಲಿಂಕ್ ಹೊಂದಿರುವ ಶಂಕಿತರನ್ನು ಒಳಗೊಂಡಿದೆ."
+            : "**Summary:** Yes, modularity-based community detection identified 3 active criminal clusters operating across police jurisdictions.\n\n**Key Findings:**\n- **Cluster 1 (Theft Crew)**: Contains 8 members who share 12 prior burglary cases.\n- **Cluster 2 (Crime Syndicate)**: Active in Mandya with 5 linked suspects.\n- **Cluster 3 (Trafficking Ring)**: Connected to 4 distinct police stations.";
+          mockContext = "Modularity detection: Cluster 1 has size 8, Cluster 2 has size 5.";
+          mockGraphData = {
+            nodes: [
+              { id: "Ramesh Kumar", type: "accused", label: "Ramesh Kumar (Suspect)" },
+              { id: "Suresh Gowda", type: "accused", label: "Suresh Gowda (Lookout)" },
+              { id: "Anil Hegde", type: "accused", label: "Anil Hegde (Asset Handler)" },
+              { id: "KA-19-2026-00456", type: "case", label: "Case KA-19-2026-00456" },
+              { id: "Phone: 9876543210", type: "phone", label: "Phone: 9876543210" }
+            ],
+            links: [
+              { source: "Ramesh Kumar", target: "KA-19-2026-00456", type: "ACCUSED_IN" },
+              { source: "Suresh Gowda", target: "KA-19-2026-00456", type: "LOOKOUT_IN" },
+              { source: "Anil Hegde", target: "KA-19-2026-00456", type: "RECEIVER_IN" },
+              { source: "Ramesh Kumar", target: "Phone: 9876543210", type: "USES" }
+            ]
+          };
         } else if (queryLower.includes("00456") || queryLower.includes("repeat offender") || queryLower.includes("associate") || queryLower.includes("network")) {
           mockRoute = "hybrid";
           mockAnswer = language === "kn"
-            ? "ನೆಟ್‌ವರ್ಕ್ ವಿಶ್ಲೇಷಣೆ: ಪ್ರಕರಣ KA-19-2026-00456 ಕ್ಕೆ ಸಂಬಂಧಿಸಿದಂತೆ 3 ಪರಿಚಿತ ಆರೋಪಿಗಳು ಪತ್ತೆಯಾಗಿದ್ದಾರೆ. ರಮೇಶ್ ಕುಮಾರ್ ಅವರೊಂದಿಗೆ ಸುರೇಶ್ ಗೌಡ ಮತ್ತು ಅನಿಲ್ ಹೆಗಡೆ ನಡುವೆ ನೇರ ಸಂಪರ್ಕಗಳಿವೆ."
-            : "Network Analytics Report: Visual relationship graphs map 3 accused linked to organized house break-ins in Mysuru. Suspect Ramesh Kumar has direct links to lookout Suresh Gowda and receiver Anil Hegde.";
+            ? "**ಸಾರಾಂಶ:** ಪ್ರಕರಣ KA-19-2026-00456 ಕ್ಕೆ ಸಂಬಂಧಿಸಿದ ಆರೋಪಿಗಳಿಗೆ 3 ಹಿಂದಿನ ಸಂಬಂಧಗಳು ಕಂಡುಬಂದಿವೆ.\n\n**ಮುಖ್ಯಾಂಶಗಳು:**\n- **ರಮೇಶ್ ಕುಮಾರ್ (ಮುಖ್ಯ ಆರೋಪಿ)**: 14 ಪ್ರಕರಣಗಳು ಮತ್ತು 7 ಸಹಚರರೊಂದಿಗೆ ಉನ್ನತ ಅಪಾಯದ ಶ್ರೇಣಿಯಲ್ಲಿದ್ದಾನೆ."
+            : "**Summary:** 3 prior associations were found for the accused linked to Case KA-19-2026-00456.\n\n**Key Findings:**\n- **Ramesh Kumar (Suspect)**: Flagged High risk due to 14 cases and 7 known associates.\n- **Suresh Gowda (Lookout)**: 3 prior cases, Medium risk scoring.\n- **Anil Hegde (Receiver)**: 2 prior cases, Medium risk scoring.";
           mockSql = "SELECT DISTINCT CM.CrimeNo, PI.FullName FROM Accused A JOIN CaseMaster CM ON A.CaseMasterID = CM.CaseMasterID WHERE CM.CaseNo = 'KA-19-2026-00456';";
           mockContext = "Accused records: Ramesh Kumar (ID: 9871) · Case: KA-19-2026-00456";
           mockGraphData = {
@@ -432,11 +452,11 @@ export default function App() {
               { source: "Ramesh Kumar", target: "Phone: 9876543210", type: "USES" }
             ]
           };
-        } else if (queryLower.includes("burglary") || queryLower.includes("reported in")) {
+        } else if (queryLower.includes("burglary") || queryLower.includes("reported in") || queryLower.includes("average age") || queryLower.includes("how many")) {
           mockRoute = "sql";
           mockAnswer = language === "kn"
-            ? "ಕಳೆದ ತಿಂಗಳು ಮೈಸೂರು ಜಿಲ್ಲೆಯಲ್ಲಿ ಒಟ್ಟು 27 ಕಳ್ಳತನ ಪ್ರಕರಣಗಳು ವರದಿಯಾಗಿವೆ."
-            : "Structured Query Analysis: The database reports 27 burglary cases in Mysuru during June 2026.";
+            ? "**ಸಾರಾಂಶ:** ಕಳೆದ ತಿಂಗಳು ಮೈಸೂರು ಜಿಲ್ಲೆಯಲ್ಲಿ ಒಟ್ಟು 27 ಕಳ್ಳತನ ಪ್ರಕರಣಗಳು ವರದಿಯಾಗಿವೆ."
+            : "**Summary:** The database reports 27 burglary cases in Mysuru during June 2026.\n\n**Key Findings:**\n- **Caseload counts**: 27 burglary cases registered.\n- **Active list**: 14 under active investigation.";
           mockSql = "SELECT COUNT(*) FROM CaseMaster WHERE District='Mysuru';";
           mockContext = "CaseMaster Table · District: Mysuru";
         }
@@ -528,12 +548,14 @@ export default function App() {
           font-family: 'IBM Plex Mono', monospace;
         }
         .reasoning-container-dark {
-          background-color: #081628;
-          border-left: 3px solid var(--brass);
+          background-color: #061224;
+          border: 1px solid #1e3a5f;
+          border-radius: 4px;
         }
         .reasoning-container-light {
-          background-color: #F4F5F7;
-          border-left: 3px solid var(--brass);
+          background-color: #EEF0F1;
+          border: 1px solid #dde1e4;
+          border-radius: 4px;
         }
         .dot {
           width: 6px;
@@ -589,7 +611,6 @@ export default function App() {
 
         {/* SETTINGS AND ACTIONS */}
         <div className="flex items-center gap-3">
-          {/* Theme Toggle Button */}
           <button
             onClick={() => setTheme(theme === "dark" ? "light" : "dark")}
             className="p-1.5 rounded transition-all hover:bg-opacity-20 hover:bg-white text-stone-300"
@@ -607,7 +628,6 @@ export default function App() {
             )}
           </button>
 
-          {/* User Role Selection */}
           <div className="flex items-center gap-1.5">
             <label className="text-[9px] text-[#8391A3] uppercase font-mono">Role:</label>
             <select
@@ -622,7 +642,6 @@ export default function App() {
             </select>
           </div>
 
-          {/* Language Selection */}
           <div className="flex items-center gap-1.5">
             <label className="text-[9px] text-[#8391A3] uppercase font-mono">Lang:</label>
             <select
@@ -635,7 +654,6 @@ export default function App() {
             </select>
           </div>
 
-          {/* Supervisor Database audit logs button */}
           {role === "supervisor" && (
             <button
               onClick={() => setShowAuditDrawer(true)}
@@ -645,7 +663,6 @@ export default function App() {
             </button>
           )}
 
-          {/* Export PDF Button */}
           <button
             onClick={handleExportPDF}
             className="text-xs font-semibold px-3 py-1.5 rounded brass-btn"
@@ -657,13 +674,12 @@ export default function App() {
 
       {/* BODY WORKSPACE AREA */}
       <div className="flex flex-1 overflow-hidden">
-        {/* SIDEBAR: GEMINI CHAT SESSION MANAGER */}
+        {/* SIDEBAR */}
         <aside 
           className={`w-64 shrink-0 border-r flex flex-col overflow-hidden ${
             theme === "dark" ? "bg-[#0b1b2f] border-[#1e3a5f]" : "bg-white border-[#dde1e4]"
           }`}
         >
-          {/* Create New Chat Button */}
           <div className="p-4 border-b border-opacity-15 border-slate-500">
             <button
               onClick={handleNewChat}
@@ -674,7 +690,6 @@ export default function App() {
             </button>
           </div>
 
-          {/* Chat Sessions List */}
           <div className="flex-1 overflow-y-auto p-2.5 space-y-1">
             <div className="text-[10px] uppercase font-mono tracking-wider text-[#8391A3] px-2 mb-2">
               Recent Logs
@@ -692,14 +707,11 @@ export default function App() {
                   }`}
                 >
                   <div className="flex items-center gap-2 truncate">
-                    {/* Chat bubble icon */}
                     <svg className="w-3.5 h-3.5 shrink-0 opacity-60" fill="none" stroke="currentColor" strokeWidth="2" viewBox="0 0 24 24">
                       <path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z" />
                     </svg>
                     <span className="truncate">{c.title}</span>
                   </div>
-
-                  {/* Deletion control */}
                   <button
                     onClick={(e) => handleDeleteChat(c.id, e)}
                     className="p-1 rounded opacity-0 group-hover:opacity-100 hover:text-red-500 hover:bg-slate-500 hover:bg-opacity-15 transition-all"
@@ -718,22 +730,18 @@ export default function App() {
         {/* MAIN CHAT AREA */}
         <div className="flex-1 flex flex-col overflow-hidden relative">
           
-          {/* Scrollable message feed / Suggestions State */}
           <main className="flex-1 overflow-y-auto px-6 py-6">
-            <div className="max-w-3xl mx-auto space-y-5">
+            <div className="max-w-3xl mx-auto space-y-6"> {/* Increased thread spacing (Fix 5.5) */}
               
-              {/* If empty conversation (only system greeting exists), render Gemini style grid */}
               {activeChat.messages.length <= 1 ? (
                 <div className="flex flex-col items-center justify-center py-6 space-y-8 animate-fade-in">
                   
-                  {/* System greeting bubble */}
                   <div className={`max-w-2xl px-5 py-4 rounded-lg text-sm text-center leading-relaxed ${
                     theme === "dark" ? "bubble-assistant-dark" : "bubble-assistant-light"
                   }`}>
                     {activeChat.messages[0]?.content}
                   </div>
 
-                  {/* Suggestions Header */}
                   <div className="text-center">
                     <span className="text-xs uppercase font-mono tracking-wider text-[#C6963C] block mb-1">
                       Quick Start Prompts
@@ -741,7 +749,6 @@ export default function App() {
                     <p className="text-[11px] text-slate-400">Select an analytics topic to load and query database trails.</p>
                   </div>
 
-                  {/* Central Suggestions 2x2 Grid */}
                   <div className="grid grid-cols-2 gap-4 w-full max-w-2xl">
                     {DETAILED_PROMPT_SUGGESTIONS.map((s, idx) => (
                       <button
@@ -762,8 +769,7 @@ export default function App() {
 
                 </div>
               ) : (
-                // Scrolling Messages thread
-                <div className="space-y-4">
+                <div className="space-y-6"> {/* Consistent spacing gaps between bubbles */}
                   {activeChat.messages.map((msg, index) => {
                     if (msg.isSystemNotice) {
                       return (
@@ -780,13 +786,26 @@ export default function App() {
                         className={`flex flex-col ${isUser ? "items-end" : "items-start"}`}
                       >
                         <div 
-                          className={`max-w-2xl px-4 py-3 rounded-lg text-sm leading-relaxed ${
+                          className={`max-w-2xl px-5 py-4 rounded-lg text-sm leading-relaxed ${
                             isUser 
                               ? "bubble-user" 
                               : theme === "dark" ? "bubble-assistant-dark" : "bubble-assistant-light"
                           }`}
                         >
-                          <p className="whitespace-pre-line">{msg.content}</p>
+                          {/* Color-Coded Route Badge (Fix 5.2) */}
+                          {!isUser && msg.route && msg.route !== "system" && (
+                            <RouteBadge route={msg.route} />
+                          )}
+
+                          {/* Rendered Summary/Key Findings/Details (Fix 5.1 & 5.2) */}
+                          <div className="mt-2 text-stone-100">
+                            {isUser ? <p>{msg.content}</p> : formatMessage(msg.content)}
+                          </div>
+
+                          {/* Tabular HTML SQL Results (Fix 5.3) */}
+                          {!isUser && msg.sql_results && (
+                            <SqlResultsTable results={msg.sql_results} />
+                          )}
 
                           {/* SVG forecast chart widget */}
                           {!isUser && msg.forecastData && (
@@ -802,7 +821,7 @@ export default function App() {
                             </div>
                           )}
 
-                          {/* Reasoning logs drawer */}
+                          {/* Inset Reasoning logs sub-panel (Fix 5.3) */}
                           {!isUser && msg.route && msg.route !== "system" && (
                             <ReasoningBlock 
                               msg={msg} 
@@ -822,13 +841,19 @@ export default function App() {
               )}
               
               {loading && (
-                <div className="flex flex-col items-start">
-                  <div className={`px-4 py-3 rounded-lg flex items-center gap-1.5 ${
+                <div className="flex flex-col items-start animate-pulse">
+                  {/* Sized placeholder bubble to prevent layout jump (Fix 5.6) */}
+                  <div className={`w-80 h-32 px-5 py-4 rounded-lg flex flex-col justify-between ${
                     theme === "dark" ? "bubble-assistant-dark" : "bubble-assistant-light"
                   }`}>
-                    <span className="dot dot1"></span>
-                    <span className="dot dot2"></span>
-                    <span className="dot"></span>
+                    <div className="h-4 bg-slate-700 bg-opacity-35 rounded w-1/3"></div>
+                    <div className="h-3 bg-slate-700 bg-opacity-35 rounded w-full"></div>
+                    <div className="h-3 bg-slate-700 bg-opacity-35 rounded w-5/6"></div>
+                    <div className="flex items-center gap-1.5 self-start">
+                      <span className="dot dot1"></span>
+                      <span className="dot dot2"></span>
+                      <span className="dot"></span>
+                    </div>
                   </div>
                 </div>
               )}
@@ -846,7 +871,6 @@ export default function App() {
             }}
           >
             <div className="max-w-3xl mx-auto flex items-center gap-3">
-              {/* Mic STT button */}
               <button
                 type="button"
                 onClick={toggleMic}
@@ -865,7 +889,6 @@ export default function App() {
                 </svg>
               </button>
 
-              {/* Input field */}
               <input
                 type="text"
                 placeholder={
@@ -884,7 +907,6 @@ export default function App() {
                 }`}
               />
 
-              {/* Submit button */}
               <button
                 onClick={() => handleSend()}
                 disabled={loading || !inputVal.trim()}
@@ -918,7 +940,6 @@ export default function App() {
               </button>
             </div>
 
-            {/* Audit Logs Table */}
             <div className="flex-1 overflow-y-auto mt-4">
               <table className="w-full text-left text-[11px] font-mono border-collapse">
                 <thead>
@@ -946,6 +967,191 @@ export default function App() {
           </div>
         </div>
       )}
+    </div>
+  );
+}
+
+// ---------------------------------------------------------------------------
+// LIGHTWEIGHT MARKDOWN-TO-JSX PARSER (Fix 5.1)
+// ---------------------------------------------------------------------------
+function formatMessage(text) {
+  if (!text) return null;
+
+  const lines = text.split("\n");
+  let currentSection = "general";
+  const sections = {
+    summary: [],
+    findings: [],
+    details: [],
+    general: []
+  };
+
+  lines.forEach((line) => {
+    const trimmed = line.trim();
+    if (trimmed.startsWith("**Summary:**") || trimmed.startsWith("**ಸಾರಾಂಶ:**")) {
+      currentSection = "summary";
+      sections.summary.push(trimmed.replace(/^\*\*(Summary|ಸಾರಾಂಶ):\*\*\s*/i, ""));
+    } else if (trimmed.startsWith("**Key Findings:**") || trimmed.startsWith("**ಮುಖ್ಯಾಂಶಗಳು:**")) {
+      currentSection = "findings";
+    } else if (trimmed.startsWith("**Details:**") || trimmed.startsWith("**ವಿವರಗಳು:**")) {
+      currentSection = "details";
+    } else {
+      if (currentSection === "summary") {
+        sections.summary.push(line);
+      } else if (currentSection === "findings") {
+        if (trimmed) sections.findings.push(line);
+      } else if (currentSection === "details") {
+        sections.details.push(line);
+      } else {
+        sections.general.push(line);
+      }
+    }
+  });
+
+  const parseBold = (str) => {
+    const parts = str.split(/\*\*([^*]+)\*\*/g);
+    return parts.map((part, idx) => {
+      if (idx % 2 === 1) {
+        return <strong key={idx} className="font-semibold text-[#C6963C]">{part}</strong>;
+      }
+      return part;
+    });
+  };
+
+  const renderList = (items) => {
+    return (
+      <ul className="list-disc pl-5 space-y-1.5 leading-relaxed text-sm">
+        {items.map((item, idx) => {
+          const cleanItem = item.trim().replace(/^[-*]\s*/, "");
+          if (!cleanItem) return null;
+          return (
+            <li key={idx} className="pl-1 text-stone-200">
+              {parseBold(cleanItem)}
+            </li>
+          );
+        })}
+      </ul>
+    );
+  };
+
+  if (!sections.summary.length && !sections.findings.length && !sections.details.length) {
+    return (
+      <div className="space-y-2">
+        {lines.map((l, idx) => <p key={idx}>{parseBold(l)}</p>)}
+      </div>
+    );
+  }
+
+  return (
+    <div className="space-y-4">
+      {/* 1. Summary Section */}
+      {sections.summary.length > 0 && (
+        <div className="text-base font-medium leading-relaxed border-l-2 border-[#C6963C] pl-3 italic text-stone-100">
+          {sections.summary.map((l, idx) => <span key={idx}>{parseBold(l)} </span>)}
+        </div>
+      )}
+      
+      {/* 2. Key Findings Section */}
+      {sections.findings.length > 0 && (
+        <div className="space-y-2">
+          <h4 className="text-xs uppercase font-mono tracking-wider text-[#C6963C] font-semibold">
+            Key Findings
+          </h4>
+          {renderList(sections.findings)}
+        </div>
+      )}
+      
+      {/* 3. Details Section */}
+      {sections.details.length > 0 && (
+        <div className="space-y-2 pt-2 border-t border-slate-700 border-opacity-35">
+          <h4 className="text-xs uppercase font-mono tracking-wider text-[#C6963C] font-semibold">
+            Details
+          </h4>
+          <div className="text-sm leading-relaxed space-y-1.5 opacity-90 text-stone-300">
+            {sections.details.map((l, idx) => <p key={idx}>{parseBold(l)}</p>)}
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
+// ---------------------------------------------------------------------------
+// TABULAR SQL RESULTS COMPONENT (Fix 5.3)
+// ---------------------------------------------------------------------------
+function SqlResultsTable({ results }) {
+  if (!Array.isArray(results) || results.length === 0) return null;
+  
+  const maxRows = 10;
+  const displayRows = results.slice(0, maxRows);
+  const hasMore = results.length > maxRows;
+  
+  return (
+    <div className="mt-3 overflow-x-auto border border-slate-700 rounded bg-[#081628] bg-opacity-65 p-2.5">
+      <span className="text-[9px] uppercase tracking-wider text-[#C6963C] font-mono block mb-1.5">
+        Query Result Table ({results.length} rows)
+      </span>
+      <table className="w-full text-[10px] font-mono text-left border-collapse">
+        <tbody>
+          {displayRows.map((row, rIdx) => {
+            const isEven = rIdx % 2 === 0;
+            return (
+              <tr 
+                key={rIdx} 
+                className={isEven ? "bg-[#0b1f3a] bg-opacity-40" : "bg-transparent"}
+              >
+                {Array.isArray(row) ? (
+                  row.map((val, cIdx) => (
+                    <td key={cIdx} className="p-1 border-b border-slate-800 text-stone-300">
+                      {String(val)}
+                    </td>
+                  ))
+                ) : (
+                  <td className="p-1 border-b border-slate-800 text-stone-300">
+                    {String(row)}
+                  </td>
+                )}
+              </tr>
+            );
+          })}
+        </tbody>
+      </table>
+      {hasMore && (
+        <div className="text-[8.5px] text-[#C6963C] italic mt-1.5 font-mono">
+          + {results.length - maxRows} more rows truncated
+        </div>
+      )}
+    </div>
+  );
+}
+
+// ---------------------------------------------------------------------------
+// COLOR-CODED ROUTE BADGE (Fix 5.2)
+// ---------------------------------------------------------------------------
+function RouteBadge({ route }) {
+  let bgColor = "bg-slate-700 text-slate-300 border-slate-500";
+  let displayRoute = route.toUpperCase();
+
+  if (route === "sql") {
+    bgColor = "bg-[#0c2447] text-[#C6963C] border-[#C6963C]";
+  } else if (route === "network") {
+    bgColor = "bg-red-950 text-red-400 border-red-800";
+  } else if (route === "forecast") {
+    bgColor = "bg-purple-950 text-purple-400 border-purple-800";
+  } else if (route === "hybrid") {
+    bgColor = "bg-amber-950 text-amber-400 border-amber-800";
+  } else if (route === "graph") {
+    bgColor = "bg-slate-900 text-slate-300 border-slate-700";
+  } else if (route === "system") {
+    bgColor = "bg-[#09351C] text-[#2F6F52] border-[#2F6F52]";
+    displayRoute = "VERIFIED";
+  }
+
+  return (
+    <div className="flex mb-2">
+      <span className={`text-[9px] uppercase tracking-wider font-mono border px-2 py-0.5 rounded ${bgColor}`}>
+        {displayRoute} PIPELINE
+      </span>
     </div>
   );
 }
@@ -982,7 +1188,7 @@ function ForecastChart({ data, theme }) {
     : forecastCoords.reduce((path, p, i) => path + (i === 0 ? `M ${p.x} ${p.y}` : ` L ${p.x} ${p.y}`), "");
 
   return (
-    <div className={`mt-2 p-3 rounded border text-[10px] font-mono ${
+    <div className={`mt-3 p-4 rounded-lg border text-[10px] font-mono shadow-sm ${
       theme === "dark" ? "bg-[#0b1628] border-[#1e3a5f]" : "bg-slate-50 border-slate-200"
     }`}>
       <span className="font-semibold block mb-2 text-[#C6963C]">Time-Series Projection Dashboard</span>
@@ -1023,7 +1229,6 @@ function NetworkGraph({ data, theme }) {
 
   const [selectedNode, setSelectedNode] = useState(null);
 
-  // Group nodes by types for structured, clean horizontal tiers
   const cases = nodes.filter((n) => n.type === "case");
   const suspects = nodes.filter((n) => n.type === "accused");
   const others = nodes.filter((n) => n.type !== "case" && n.type !== "accused");
@@ -1042,13 +1247,12 @@ function NetworkGraph({ data, theme }) {
     nodePositions[n.id] = { x: gap * (idx + 1), y: 75 };
   });
 
-  // 3. Others (Phones, Stations, and Assets) on Bottom Tier (y = 125)
+  // 3. Others on Bottom Tier (y = 125)
   others.forEach((n, idx) => {
     const gap = width / (others.length + 1);
     nodePositions[n.id] = { x: gap * (idx + 1), y: 125 };
   });
 
-  // Check if a node is linked to the selected node
   const isLinked = (nodeId) => {
     if (!selectedNode) return true;
     if (selectedNode === nodeId) return true;
@@ -1065,7 +1269,7 @@ function NetworkGraph({ data, theme }) {
   };
 
   return (
-    <div className={`mt-2 p-3 rounded border text-[10px] font-mono select-none ${
+    <div className={`mt-3 p-4 rounded-lg border text-[10px] font-mono select-none shadow-sm ${
       theme === "dark" ? "bg-[#0b1628] border-[#1e3a5f]" : "bg-slate-50 border-slate-200"
     }`}>
       <div className="flex items-center justify-between mb-2">
@@ -1081,7 +1285,6 @@ function NetworkGraph({ data, theme }) {
       </div>
 
       <svg viewBox={`0 0 ${width} ${height}`} className="w-full">
-        {/* SVG filter for dropshadow elements */}
         <defs>
           <filter id="shadow" x="-20%" y="-20%" width="140%" height="140%">
             <feDropShadow dx="0" dy="1.5" stdDeviation="1.5" floodColor="#000" floodOpacity="0.2" />
@@ -1094,7 +1297,6 @@ function NetworkGraph({ data, theme }) {
           const t = nodePositions[link.target];
           if (!s || !t) return null;
 
-          // S-Curve Control Points
           const cpY1 = s.y + (t.y - s.y) / 2;
           const cpY2 = cpY1;
           const pathD = `M ${s.x} ${s.y} C ${s.x} ${cpY1}, ${t.x} ${cpY2}, ${t.x} ${t.y}`;
@@ -1148,9 +1350,7 @@ function NetworkGraph({ data, theme }) {
                 transition: "opacity 0.25s ease"
               }}
             >
-              {/* Node Background Shapes */}
               {node.type === "case" ? (
-                // Folder icon shape for Case Node
                 <path
                   d="M -10 -7 L -4 -7 L -2 -4 L 10 -4 L 10 7 L -10 7 Z"
                   fill={color}
@@ -1159,7 +1359,6 @@ function NetworkGraph({ data, theme }) {
                   filter="url(#shadow)"
                 />
               ) : (
-                // Circle badge for suspects and assets
                 <circle
                   r="8"
                   fill={color}
@@ -1169,17 +1368,13 @@ function NetworkGraph({ data, theme }) {
                 />
               )}
 
-              {/* Miniature Icon details inside Node shapes */}
               {node.type === "accused" && (
-                // Tiny user avatar head/shoulders
                 <path d="M -4 5 C -4 2, -2 1, 0 1 C 2 1, 4 2, 4 5 Z M 0 -3 A 2 2 0 1 0 0 1 A 2 2 0 1 0 0 -3 Z" fill="#FFF" />
               )}
               {node.type === "phone" && (
-                // Tiny telephone/dot
                 <circle r="2" fill="#FFF" />
               )}
 
-              {/* Node Labels */}
               <text
                 y={node.type === "case" ? "-11" : "-12"}
                 fill={theme === "dark" ? "#F1F5F9" : "#0F172A"}
@@ -1207,7 +1402,7 @@ function NetworkGraph({ data, theme }) {
 }
 
 // ---------------------------------------------------------------------------
-// COLLAPSIBLE REASONING COMPONENT
+// COLLAPSIBLE INSET REASONING COMPONENT (Fix 5.3)
 // ---------------------------------------------------------------------------
 function ReasoningBlock({ msg, theme, isRawSqlPermitted }) {
   const [open, setOpen] = useState(false);
@@ -1234,7 +1429,7 @@ function ReasoningBlock({ msg, theme, isRawSqlPermitted }) {
       </button>
 
       {open && (
-        <div className={`mt-2 p-3 text-[10px] font-mono rounded space-y-2.5 ${
+        <div className={`mt-2 p-3 text-[10px] font-mono border space-y-2.5 ${
           theme === "dark" ? "reasoning-container-dark" : "reasoning-container-light"
         }`}>
           <div className="flex justify-between items-center text-[9px] text-slate-400">
