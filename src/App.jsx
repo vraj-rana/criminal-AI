@@ -1,57 +1,93 @@
 import React, { useState, useEffect, useRef } from "react";
 import { jsPDF } from "jspdf";
 
-// ---------------------------------------------------------------------------
-// DESIGN TOKENS (referencing CSS variables inside styled roots)
-// ---------------------------------------------------------------------------
-
 export default function App() {
-  const [messages, setMessages] = useState([
-    {
-      role: "assistant",
-      content: "Welcome to Vigil AI Crime Intelligence Platform. You can query case files, offender records, or trend forecasts in English and Kannada.",
-      route: "system",
-      sql: null,
-      context: "Initial greeting context.",
-      timestamp: new Date().toLocaleTimeString()
+  // ---------------------------------------------------------------------------
+  // SESSIONS STATE & LOCALSTORAGE PERSISTENCE
+  // ---------------------------------------------------------------------------
+  const [chats, setChats] = useState(() => {
+    const saved = localStorage.getItem("vigil_chats");
+    if (saved) {
+      try {
+        return JSON.parse(saved);
+      } catch (e) {
+        console.error("Failed to parse saved chats:", e);
+      }
     }
-  ]);
+    return [
+      {
+        id: "chat-default",
+        title: "New Investigation",
+        messages: [
+          {
+            role: "assistant",
+            content: "Welcome to Vigil AI Crime Intelligence Platform. You can query case files, offender records, or trend forecasts in English and Kannada.",
+            route: "system",
+            sql: null,
+            context: "Initial greeting context.",
+            timestamp: new Date().toLocaleTimeString()
+          }
+        ]
+      }
+    ];
+  });
+
+  const [activeChatId, setActiveChatId] = useState(() => {
+    const savedActive = localStorage.getItem("vigil_active_chat_id");
+    return savedActive || "chat-default";
+  });
+
   const [inputVal, setInputVal] = useState("");
   const [loading, setLoading] = useState(false);
-  const [language, setLanguage] = useState("en"); // "en" or "kn"
+  const [language, setLanguage] = useState("en"); // "en" | "kn"
   const [role, setRole] = useState("investigator"); // "investigator" | "analyst" | "supervisor" | "policymaker"
   const [theme, setTheme] = useState("dark"); // "dark" | "light"
   
-  // Custom states for visual analytics
+  // Custom states for visual logs and drawers
   const [isListening, setIsListening] = useState(false);
   const [speechSupported, setSpeechSupported] = useState(true);
   const [showAuditDrawer, setShowAuditDrawer] = useState(false);
   const [auditLogs, setAuditLogs] = useState([]);
-  const [showPromptsSidebar, setShowPromptsSidebar] = useState(true);
   
   const threadEndRef = useRef(null);
   const recognitionRef = useRef(null);
+
+  // Sync chats and active index to localStorage
+  useEffect(() => {
+    localStorage.setItem("vigil_chats", JSON.stringify(chats));
+  }, [chats]);
+
+  useEffect(() => {
+    localStorage.setItem("vigil_active_chat_id", activeChatId);
+  }, [activeChatId]);
+
+  // Retrieve active chat object
+  const activeChat = chats.find((c) => c.id === activeChatId) || chats[0] || {
+    id: "chat-default",
+    title: "New Investigation",
+    messages: []
+  };
 
   const DETAILED_PROMPT_SUGGESTIONS = [
     {
       title: "1. Network Link Analysis",
       q: "Show repeat offenders linked to Case KA-19-2026-00456 and list their associates",
-      desc: "Map the nodes and criminal links for organized break-ins."
+      desc: "Retrieve and map organized burglary nodes in Mysuru."
     },
     {
       title: "2. Caseload Trend Forecast",
       q: "Predict burglary cases in Mysuru next month using database metrics",
-      desc: "Compute a 3-month linear regression projection on local burglary trends."
+      desc: "Run simple linear regression on Mysuru burglaries."
     },
     {
       title: "3. Spatio-Temporal SQL search",
       q: "How many burglary cases were reported in Mysuru last month?",
-      desc: "Run structured aggregations over the district crime master records."
+      desc: "Verify counts of chargesheeted vs. pending burglary files."
     },
     {
       title: "4. Kannada Local Query",
       q: "ಮೈಸೂರಿನಲ್ಲಿ ಕಳೆದ ತಿಂಗಳು ಎಷ್ಟು ಕಳ್ಳತನ ಪ್ರಕರಣಗಳು ವರದಿಯಾಗಿವೆ?",
-      desc: "Queries database using Kannada natural language translation."
+      desc: "Runs Kannada translations against state SQL tables."
     }
   ];
 
@@ -80,17 +116,17 @@ export default function App() {
     }
   }, []);
 
-  // Sync language selection to Speech Recognition lang parameter
+  // Sync language selection to Speech Recognition
   useEffect(() => {
     if (recognitionRef.current) {
       recognitionRef.current.lang = language === "kn" ? "kn-IN" : "en-IN";
     }
   }, [language]);
 
-  // Auto-scroll to bottom of thread
+  // Auto-scroll message feed
   useEffect(() => {
     threadEndRef.current?.scrollIntoView({ behavior: "smooth" });
-  }, [messages, loading]);
+  }, [activeChat.messages, loading]);
 
   // Fetch Supervisor Audit logs from database API
   const fetchAuditLogs = async () => {
@@ -100,7 +136,7 @@ export default function App() {
       const data = await response.json();
       setAuditLogs(data);
     } catch {
-      // Fallback mock audit log rows if backend is down
+      // Fallback mock audits when server is down
       setAuditLogs([
         { id: 4, timestamp: "2026-07-11 21:16:49", question: "predict burglary cases in Mysuru next month", route: "forecast", sql: "SELECT CM.CrimeNo...", role: "Investigator", user_id: "Anonymous" },
         { id: 3, timestamp: "2026-07-11 20:55:12", question: "Show repeat offenders linked to Case KA-19-2026-00456", route: "hybrid", sql: "SELECT DISTINCT...", role: "Supervisor", user_id: "Anonymous" },
@@ -126,20 +162,56 @@ export default function App() {
     }
   };
 
-  const handleNewConversation = () => {
-    setMessages([
-      {
-        role: "assistant",
-        content: language === "kn" 
-          ? "ವಿಜಿಲ್ ಎಐ ಅಪರಾಧ ಗುಪ್ತಚರ ವೇದಿಕೆಗೆ ಸುಸ್ವಾಗತ. ನೀವು ಪ್ರಕರಣದ ಕಡತಗಳು, ಅಪರಾಧಿಗಳ ವಿವರಗಳು ಅಥವಾ ಅಪರಾಧ ಪ್ರವೃತ್ತಿಗಳ ಬಗ್ಗೆ ಕನ್ನಡ ಮತ್ತು ಇಂಗ್ಲಿಷ್‌ನಲ್ಲಿ ವಿವರವಾಗಿ ಪ್ರಶ್ನಿಸಬಹುದು."
-          : "Welcome to Vigil AI Crime Intelligence Platform. You can query case files, offender records, or trend forecasts in English and Kannada.",
-        route: "system",
-        sql: null,
-        context: "New conversation initiated.",
-        timestamp: new Date().toLocaleTimeString()
+  const handleNewChat = () => {
+    const newId = "chat-" + Date.now();
+    const newChat = {
+      id: newId,
+      title: language === "kn" ? "ಹೊಸ ತನಿಖೆ" : "New Investigation",
+      messages: [
+        {
+          role: "assistant",
+          content: language === "kn" 
+            ? "ವಿಜಿಲ್ ಎಐ ಅಪರಾಧ ಗುಪ್ತಚರ ವೇದಿಕೆಗೆ ಸುಸ್ವಾಗತ. ನೀವು ಪ್ರಕರಣದ ಕಡತಗಳು, ಅಪರಾಧಿಗಳ ವಿವರಗಳು ಅಥವಾ ಅಪರಾಧ ಪ್ರವೃತ್ತಿಗಳ ಬಗ್ಗೆ ಕನ್ನಡ ಮತ್ತು ಇಂಗ್ಲಿಷ್‌ನಲ್ಲಿ ವಿವರವಾಗಿ ಪ್ರಶ್ನಿಸಬಹುದು."
+            : "Welcome to Vigil AI Crime Intelligence Platform. You can query case files, offender records, or trend forecasts in English and Kannada.",
+          route: "system",
+          sql: null,
+          context: "Initial greeting context.",
+          timestamp: new Date().toLocaleTimeString()
+        }
+      ]
+    };
+    setChats((prev) => [newChat, ...prev]);
+    setActiveChatId(newId);
+  };
+
+  const handleDeleteChat = (chatId, e) => {
+    e.stopPropagation();
+    if (chats.length <= 1) {
+      const defaultId = "chat-" + Date.now();
+      setChats([
+        {
+          id: defaultId,
+          title: "New Investigation",
+          messages: [
+            {
+              role: "assistant",
+              content: "Welcome to Vigil AI Crime Intelligence Platform. You can query case files, offender records, or trend forecasts in English and Kannada.",
+              route: "system",
+              sql: null,
+              context: "Initial greeting context.",
+              timestamp: new Date().toLocaleTimeString()
+            }
+          ]
+        }
+      ]);
+      setActiveChatId(defaultId);
+    } else {
+      const remaining = chats.filter((c) => c.id !== chatId);
+      setChats(remaining);
+      if (activeChatId === chatId) {
+        setActiveChatId(remaining[0].id);
       }
-    ]);
-    setInputVal("");
+    }
   };
 
   const handleExportPDF = () => {
@@ -158,7 +230,7 @@ export default function App() {
     doc.text(`Exported Date: ${new Date().toLocaleString()}`, 14, yOffset);
     yOffset += 14;
 
-    messages.forEach((msg) => {
+    activeChat.messages.forEach((msg) => {
       if (yOffset > 270) {
         doc.addPage();
         yOffset = 20;
@@ -197,7 +269,6 @@ export default function App() {
           yOffset += 5;
         }
       }
-      
       yOffset += 8;
     });
 
@@ -209,18 +280,33 @@ export default function App() {
     if (!userMessageText || loading) return;
 
     setInputVal("");
-    
+
     const userMsg = {
       role: "user",
       content: userMessageText,
       timestamp: new Date().toLocaleTimeString()
     };
-    
-    setMessages((prev) => [...prev, userMsg]);
+
+    // Update active chat title dynamically if this is the first user query
+    let updatedChats = chats.map((c) => {
+      if (c.id === activeChatId) {
+        const titleText = userMessageText.length > 22 ? userMessageText.slice(0, 22) + "..." : userMessageText;
+        const newMessages = [...c.messages, userMsg];
+        const isFirstUserMsg = c.messages.filter((m) => m.role === "user").length === 0;
+        return {
+          ...c,
+          title: isFirstUserMsg ? titleText : c.title,
+          messages: newMessages
+        };
+      }
+      return c;
+    });
+
+    setChats(updatedChats);
     setLoading(true);
 
-    // Prepare history: send last 6 turns (excluding initial system notices)
-    const historyPayload = messages
+    const activeChatRef = updatedChats.find((c) => c.id === activeChatId);
+    const historyPayload = activeChatRef.messages
       .filter((m) => m.route !== "system" && m.route !== "error")
       .slice(-6)
       .map((m) => ({
@@ -240,44 +326,62 @@ export default function App() {
         })
       });
 
-      if (!response.ok) {
-        throw new Error("API error.");
-      }
+      if (!response.ok) throw new Error("API Offline");
 
       const data = await response.json();
       
-      setMessages((prev) => [
-        ...prev,
-        {
-          role: "assistant",
-          content: data.answer,
-          route: data.route,
-          sql: data.sql,
-          context: data.context,
-          forecastData: data.forecast_data,
-          graphData: data.graph_data,
-          timestamp: new Date().toLocaleTimeString()
-        }
-      ]);
+      setChats((prevChats) =>
+        prevChats.map((c) => {
+          if (c.id === activeChatId) {
+            return {
+              ...c,
+              messages: [
+                ...c.messages,
+                {
+                  role: "assistant",
+                  content: data.answer,
+                  route: data.route,
+                  sql: data.sql,
+                  context: data.context,
+                  forecastData: data.forecast_data,
+                  graphData: data.graph_data,
+                  timestamp: new Date().toLocaleTimeString()
+                }
+              ]
+            };
+          }
+          return c;
+        })
+      );
     } catch (err) {
       console.warn("Backend server unreachable. Generating response via local mock fallback.");
       
-      setMessages((prev) => [
-        ...prev,
-        {
-          role: "assistant",
-          content: "Backend unreachable, showing a cached example response.",
-          route: "error",
-          sql: null,
-          context: null,
-          timestamp: new Date().toLocaleTimeString(),
-          isSystemNotice: true
-        }
-      ]);
+      setChats((prevChats) =>
+        prevChats.map((c) => {
+          if (c.id === activeChatId) {
+            return {
+              ...c,
+              messages: [
+                ...c.messages,
+                {
+                  role: "assistant",
+                  content: "Backend unreachable, showing a cached example response.",
+                  route: "error",
+                  sql: null,
+                  context: null,
+                  timestamp: new Date().toLocaleTimeString(),
+                  isSystemNotice: true
+                }
+              ]
+            };
+          }
+          return c;
+        })
+      );
 
       setTimeout(() => {
         const queryLower = userMessageText.toLowerCase();
-        let mockAnswer = "Detailed Analysis: Our investigation database search returned matches for suspect Ramesh Kumar, active in burglaries inside Mysuru District. Criminological profiling suggests similar modus operandi links across 3 neighboring police stations.";
+        let mockAnswer = "Detailed Analysis: Our database traversal returned search results for suspect Ramesh Kumar, active in burglary operations in Mysuru.";
         let mockSql = null;
         let mockContext = "Accused records: Ramesh Kumar (ID: 9871) · Case: KA-19-2026-00456";
         let mockRoute = "graph";
@@ -287,10 +391,10 @@ export default function App() {
         if (queryLower.includes("predict") || queryLower.includes("forecast") || queryLower.includes("next month")) {
           mockRoute = "forecast";
           mockAnswer = language === "kn" 
-            ? "ಮುನ್ಸೂಚನೆ ವರದಿ: ಮೈಸೂರಿನಲ್ಲಿ ಕಳ್ಳತನದ ಪ್ರವೃತ್ತಿ ಏರಿಕೆಯಾಗುತ್ತಿದೆ. ಜುಲೈ 2026 ಕ್ಕೆ ಅಂದಾಜು 28.5 ಪ್ರಕರಣಗಳು, ಆಗಸ್ಟ್ಗೆ 29.75 ಪ್ರಕರಣಗಳು ಮತ್ತು ಸೆಪ್ಟೆಂಬರ್ಗೆ 31.00 ಪ್ರಕರಣಗಳನ್ನು ಸರಳ ರೇಖೀಯ ಪ್ರವೃತ್ತಿ ಅಂದಾಜಿನ ಮೂಲಕ ಲೆಕ್ಕಹಾಕಲಾಗಿದೆ."
-            : "Detailed Forecast: Linear regression trend calculations predict a slight upward trend in Burglary cases inside Mysuru. July 2026: 28.50 cases, August 2026: 29.75 cases, and September 2026: 31.00 cases. Causal explanation: simple linear line fitting over historical counts.";
-          mockSql = "SELECT strftime('%Y-%m', CM.CrimeRegisteredDate) as month, COUNT(*) FROM CaseMaster CM JOIN CrimeSubHead CS ON CM.CrimeMinorHeadID = CS.CrimeSubHeadID JOIN Unit U ON CM.PoliceStationID = U.UnitID WHERE CS.CrimeHeadName = 'Burglary' AND U.UnitName LIKE '%Mysuru%' GROUP BY month;";
-          mockContext = "Forecast methodology: Simple linear regression equation (y = 1.25*x + 14.5). Capped at 500 rows.";
+            ? "ಮುನ್ಸೂಚನೆ ವರದಿ: ಮೈಸೂರಿನಲ್ಲಿ ಕಳ್ಳತನದ ಪ್ರವೃತ್ತಿ ಏರಿಕೆಯಾಗುತ್ತಿದೆ. ಜುಲೈಗೆ 28.5 ಪ್ರಕರಣಗಳು, ಆಗಸ್ಟ್ಗೆ 29.75 ಪ್ರಕರಣಗಳನ್ನು ಸರಳ ರೇಖೀಯ ಅಂದಾಜಿನ ಮೂಲಕ ಲೆಕ್ಕಹಾಕಲಾಗಿದೆ."
+            : "Detailed Forecast: Linear regression calculations predict a slight upward trend in Burglary cases inside Mysuru. July 2026: 28.50, August 2026: 29.75, and September 2026: 31.00 cases.";
+          mockSql = "SELECT strftime('%Y-%m', CM.CrimeRegisteredDate) as month, COUNT(*) FROM CaseMaster CM GROUP BY month;";
+          mockContext = "Forecast methodology: Simple linear regression equation (y = 1.25*x + 14.5).";
           mockForecastData = {
             historical: [
               { month: "2026-01", count: 22 },
@@ -309,10 +413,10 @@ export default function App() {
         } else if (queryLower.includes("00456") || queryLower.includes("repeat offender") || queryLower.includes("associate") || queryLower.includes("network")) {
           mockRoute = "hybrid";
           mockAnswer = language === "kn"
-            ? "ನೆಟ್‌ವರ್ಕ್ ವಿಶ್ಲೇಷಣೆ: ಪ್ರಕರಣ KA-19-2026-00456 ಕ್ಕೆ ಸಂಬಂಧಿಸಿದಂತೆ 3 ಪರಿಚಿತ ಸಕ್ರಿಯ ಕಳ್ಳತನ ಆರೋಪಿಗಳು ಪತ್ತೆಯಾಗಿದ್ದಾರೆ. ರಮೇಶ್ ಕುಮಾರ್ (ಮುಖ್ಯ ಆರೋಪಿ) ಜೊತೆಗೆ ಸಹಚರರಾದ ಸುರೇಶ್ ಗೌಡ ಮತ್ತು ಅನಿಲ್ ಹೆಗಡೆ ನಡುವೆ ನೇರ ಸಂಪರ್ಕಗಳಿವೆ."
-            : "Network Analytics Report: Visual relationship graphs map 3 accused linked to organized house break-ins inside Mysuru. Suspect Ramesh Kumar has direct log links to lookout Suresh Gowda and receiver Anil Hegde.";
-          mockSql = "SELECT DISTINCT CM.CrimeNo, PI.FullName, PI.IsRepeatOffender FROM Accused A JOIN CaseMaster CM ON A.CaseMasterID = CM.CaseMasterID JOIN PersonIdentity PI ON A.PersonIdentityID = PI.PersonIdentityID WHERE CM.CaseNo = 'KA-19-2026-00456';";
-          mockContext = "Accused records: Ramesh Kumar (ID: 9871) · Lookout: Suresh Gowda · Receiver: Anil Hegde · Cases: KA-19-2026-00456";
+            ? "ನೆಟ್‌ವರ್ಕ್ ವಿಶ್ಲೇಷಣೆ: ಪ್ರಕರಣ KA-19-2026-00456 ಕ್ಕೆ ಸಂಬಂಧಿಸಿದಂತೆ 3 ಪರಿಚಿತ ಆರೋಪಿಗಳು ಪತ್ತೆಯಾಗಿದ್ದಾರೆ. ರಮೇಶ್ ಕುಮಾರ್ ಅವರೊಂದಿಗೆ ಸುರೇಶ್ ಗೌಡ ಮತ್ತು ಅನಿಲ್ ಹೆಗಡೆ ನಡುವೆ ನೇರ ಸಂಪರ್ಕಗಳಿವೆ."
+            : "Network Analytics Report: Visual relationship graphs map 3 accused linked to organized house break-ins in Mysuru. Suspect Ramesh Kumar has direct links to lookout Suresh Gowda and receiver Anil Hegde.";
+          mockSql = "SELECT DISTINCT CM.CrimeNo, PI.FullName FROM Accused A JOIN CaseMaster CM ON A.CaseMasterID = CM.CaseMasterID WHERE CM.CaseNo = 'KA-19-2026-00456';";
+          mockContext = "Accused records: Ramesh Kumar (ID: 9871) · Case: KA-19-2026-00456";
           mockGraphData = {
             nodes: [
               { id: "Ramesh Kumar", type: "accused", label: "Ramesh Kumar (Suspect)" },
@@ -331,27 +435,37 @@ export default function App() {
         } else if (queryLower.includes("burglary") || queryLower.includes("reported in")) {
           mockRoute = "sql";
           mockAnswer = language === "kn"
-            ? "ಕಳೆದ ತಿಂಗಳು ಮೈಸೂರು ಜಿಲ್ಲೆಯಲ್ಲಿ ಒಟ್ಟು 27 ಕಳ್ಳತನ ಪ್ರಕರಣಗಳು ವರದಿಯಾಗಿವೆ. ಇವುಗಳಲ್ಲಿ 14 ಸಕ್ರಿಯ ತನಿಖೆಯಲ್ಲಿದ್ದು, 8 ಪ್ರಕರಣಗಳಲ್ಲಿ ಆರೋಪಪಟ್ಟಿ ಸಲ್ಲಿಕೆಯಾಗಿದೆ."
-            : "Structured Query Analysis: The database reports 27 burglary cases in Mysuru during June 2026. The breakdown shows 14 cases under active investigation, 8 chargesheeted, and 5 pending in local court.";
-          mockSql = "SELECT COUNT(*) FROM CaseMaster CM JOIN CrimeSubHead CS ON CM.CrimeMinorHeadID = CS.CrimeSubHeadID JOIN Unit U ON CM.PoliceStationID = U.UnitID WHERE CS.CrimeHeadName = 'Burglary' AND U.UnitName LIKE '%Mysuru%' AND CM.CrimeRegisteredDate >= '2026-06-01';";
-          mockContext = "CaseMaster Table · District: Mysuru · CrimeSubHead: Burglary";
+            ? "ಕಳೆದ ತಿಂಗಳು ಮೈಸೂರು ಜಿಲ್ಲೆಯಲ್ಲಿ ಒಟ್ಟು 27 ಕಳ್ಳತನ ಪ್ರಕರಣಗಳು ವರದಿಯಾಗಿವೆ."
+            : "Structured Query Analysis: The database reports 27 burglary cases in Mysuru during June 2026.";
+          mockSql = "SELECT COUNT(*) FROM CaseMaster WHERE District='Mysuru';";
+          mockContext = "CaseMaster Table · District: Mysuru";
         }
 
         const sqlValue = (role === "analyst" || role === "supervisor") ? mockSql : null;
 
-        setMessages((prev) => [
-          ...prev,
-          {
-            role: "assistant",
-            content: mockAnswer,
-            route: mockRoute,
-            sql: sqlValue,
-            context: mockContext,
-            forecastData: mockForecastData,
-            graphData: mockGraphData,
-            timestamp: new Date().toLocaleTimeString()
-          }
-        ]);
+        setChats((prevChats) =>
+          prevChats.map((c) => {
+            if (c.id === activeChatId) {
+              return {
+                ...c,
+                messages: [
+                  ...c.messages,
+                  {
+                    role: "assistant",
+                    content: mockAnswer,
+                    route: mockRoute,
+                    sql: sqlValue,
+                    context: mockContext,
+                    forecastData: mockForecastData,
+                    graphData: mockGraphData,
+                    timestamp: new Date().toLocaleTimeString()
+                  }
+                ]
+              };
+            }
+            return c;
+          })
+        );
         setLoading(false);
       }, 800);
     } finally {
@@ -381,7 +495,7 @@ export default function App() {
       }}
     >
       <style>{`
-        @import url('https://fonts.googleapis.com/css2?family=Fraunces:opsz,wght@9..144,500;9..144,600&family=IBM+Plex+Sans:wght@400;500;600&family=IBM+Plex+Mono:wght@400;500&display=swap');
+        @import url('https://fonts.googleapis.com/css2?family=IBM+Plex+Sans:wght@400;500;600&family=IBM+Plex+Mono:wght@400;500&display=swap');
         .brass-btn {
           background-color: var(--brass);
           color: var(--navy);
@@ -436,13 +550,14 @@ export default function App() {
           40% { transform: scale(1.0); }
         }
         ::-webkit-scrollbar {
-          width: 6px;
+          width: 5px;
+          height: 5px;
         }
         ::-webkit-scrollbar-track {
           background: transparent;
         }
         ::-webkit-scrollbar-thumb {
-          background: #44516860;
+          background: #44516850;
           border-radius: 3px;
         }
       `}</style>
@@ -481,12 +596,12 @@ export default function App() {
             title="Toggle theme mode"
           >
             {theme === "dark" ? (
-              <svg width="18" height="18" fill="none" stroke="currentColor" strokeWidth="2" viewBox="0 0 24 24">
+              <svg width="17" height="17" fill="none" stroke="currentColor" strokeWidth="2" viewBox="0 0 24 24">
                 <circle cx="12" cy="12" r="5" />
                 <path d="M12 1v2M12 21v2M4.22 4.22l1.42 1.42M18.36 18.36l1.42 1.42M1 12h2M21 12h2M4.22 19.78l1.42-1.42M18.36 5.64l1.42-1.42" />
               </svg>
             ) : (
-              <svg width="18" height="18" fill="none" stroke="currentColor" strokeWidth="2" viewBox="0 0 24 24">
+              <svg width="17" height="17" fill="none" stroke="currentColor" strokeWidth="2" viewBox="0 0 24 24">
                 <path d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79z" />
               </svg>
             )}
@@ -530,14 +645,6 @@ export default function App() {
             </button>
           )}
 
-          {/* New Conversation Button */}
-          <button
-            onClick={handleNewConversation}
-            className="text-xs px-2.5 py-1.5 rounded transition-all hover:bg-stone-800 text-stone-200 border border-stone-600"
-          >
-            New
-          </button>
-
           {/* Export PDF Button */}
           <button
             onClick={handleExportPDF}
@@ -550,98 +657,169 @@ export default function App() {
 
       {/* BODY WORKSPACE AREA */}
       <div className="flex flex-1 overflow-hidden">
-        {/* SIDEBAR: DETAILED PROMPT SUGGESTIONS */}
-        {showPromptsSidebar && (
-          <aside 
-            className={`w-80 shrink-0 border-r overflow-y-auto p-4 flex flex-col gap-4 ${
-              theme === "dark" ? "bg-[#0b1b2f] border-[#1e3a5f]" : "bg-white border-[#dde1e4]"
-            }`}
-          >
-            <div>
-              <h2 className="text-xs font-semibold uppercase tracking-wider text-[#C6963C] font-mono">Investigation Prompts</h2>
-              <p className="text-[11px] text-slate-400 mt-1">Select structured queries to inspect the databases.</p>
+        {/* SIDEBAR: GEMINI CHAT SESSION MANAGER */}
+        <aside 
+          className={`w-64 shrink-0 border-r flex flex-col overflow-hidden ${
+            theme === "dark" ? "bg-[#0b1b2f] border-[#1e3a5f]" : "bg-white border-[#dde1e4]"
+          }`}
+        >
+          {/* Create New Chat Button */}
+          <div className="p-4 border-b border-opacity-15 border-slate-500">
+            <button
+              onClick={handleNewChat}
+              className="w-full flex items-center justify-center gap-2 border border-slate-500 border-opacity-40 hover:bg-slate-500 hover:bg-opacity-10 py-2.5 px-4 rounded text-xs transition-all font-semibold font-mono text-[#C6963C]"
+            >
+              <span className="text-sm font-bold">+</span>
+              {language === "kn" ? "ಹೊಸ ಚಾಟ್" : "New Chat"}
+            </button>
+          </div>
+
+          {/* Chat Sessions List */}
+          <div className="flex-1 overflow-y-auto p-2.5 space-y-1">
+            <div className="text-[10px] uppercase font-mono tracking-wider text-[#8391A3] px-2 mb-2">
+              Recent Logs
             </div>
-            
-            <div className="flex-1 flex flex-col gap-3">
-              {DETAILED_PROMPT_SUGGESTIONS.map((s, idx) => (
-                <button
-                  key={idx}
-                  onClick={() => handleSend(s.q)}
-                  className={`text-left p-3 rounded border transition-all text-xs flex flex-col gap-1.5 hover:translate-x-0.5 ${
-                    theme === "dark" 
-                      ? "bg-[#0f2745] border-[#1e3a5f] hover:border-[#C6963C] text-stone-200" 
-                      : "bg-[#f8fafc] border-[#dde1e4] hover:border-[#C6963C] text-slate-800"
+            {chats.map((c) => {
+              const isActive = c.id === activeChatId;
+              return (
+                <div
+                  key={c.id}
+                  onClick={() => setActiveChatId(c.id)}
+                  className={`group w-full flex items-center justify-between px-3 py-2.5 rounded text-xs font-mono cursor-pointer transition-all ${
+                    isActive
+                      ? theme === "dark" ? "bg-[#0f2745] text-stone-100" : "bg-slate-200 text-slate-900 font-semibold"
+                      : "hover:bg-slate-500 hover:bg-opacity-5 text-slate-400 hover:text-stone-300"
                   }`}
                 >
-                  <span className="font-semibold text-[11px] font-mono text-[#C6963C]">{s.title}</span>
-                  <span className="font-mono text-[10px] leading-relaxed line-clamp-2">{s.q}</span>
-                  <span className="text-[9px] text-slate-400 font-sans italic">{s.desc}</span>
-                </button>
-              ))}
-            </div>
-          </aside>
-        )}
-
-        {/* CHAT VIEW ENGINE */}
-        <div className="flex-1 flex flex-col overflow-hidden relative">
-          {/* Chat bubbles list */}
-          <main className="flex-1 overflow-y-auto px-6 py-6 space-y-4">
-            <div className="max-w-3xl mx-auto space-y-4">
-              {messages.map((msg, index) => {
-                if (msg.isSystemNotice) {
-                  return (
-                    <div key={index} className="max-w-md mx-auto rounded p-2.5 text-[10px] text-center bubble-notice">
-                      {msg.content}
-                    </div>
-                  );
-                }
-
-                const isUser = msg.role === "user";
-                return (
-                  <div 
-                    key={index} 
-                    className={`flex flex-col ${isUser ? "items-end" : "items-start"}`}
-                  >
-                    {/* Message Bubble Container */}
-                    <div 
-                      className={`max-w-2xl px-4 py-3 rounded-lg text-sm leading-relaxed ${
-                        isUser 
-                          ? "bubble-user" 
-                          : theme === "dark" ? "bubble-assistant-dark" : "bubble-assistant-light"
-                      }`}
-                    >
-                      <p className="whitespace-pre-line">{msg.content}</p>
-
-                      {/* FORECAST SVG CHART WIDGET */}
-                      {!isUser && msg.forecastData && (
-                        <div className="mt-3">
-                          <ForecastChart data={msg.forecastData} theme={theme} />
-                        </div>
-                      )}
-
-                      {/* NETWORK GRAPH SVG WIDGET */}
-                      {!isUser && msg.graphData && (
-                        <div className="mt-3">
-                          <NetworkGraph data={msg.graphData} theme={theme} />
-                        </div>
-                      )}
-
-                      {/* Reasoning metadata logs */}
-                      {!isUser && msg.route && msg.route !== "system" && (
-                        <ReasoningBlock 
-                          msg={msg} 
-                          theme={theme}
-                          isRawSqlPermitted={role === "analyst" || role === "supervisor"} 
-                        />
-                      )}
-                    </div>
-                    
-                    <span className="text-[10px] text-slate-400 mt-1 mx-2">
-                      {msg.timestamp}
-                    </span>
+                  <div className="flex items-center gap-2 truncate">
+                    {/* Chat bubble icon */}
+                    <svg className="w-3.5 h-3.5 shrink-0 opacity-60" fill="none" stroke="currentColor" strokeWidth="2" viewBox="0 0 24 24">
+                      <path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z" />
+                    </svg>
+                    <span className="truncate">{c.title}</span>
                   </div>
-                );
-              })}
+
+                  {/* Deletion control */}
+                  <button
+                    onClick={(e) => handleDeleteChat(c.id, e)}
+                    className="p-1 rounded opacity-0 group-hover:opacity-100 hover:text-red-500 hover:bg-slate-500 hover:bg-opacity-15 transition-all"
+                    title="Delete session"
+                  >
+                    <svg className="w-3 h-3" fill="none" stroke="currentColor" strokeWidth="2" viewBox="0 0 24 24">
+                      <path d="M3 6h18M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2M10 11v6M14 11v6" />
+                    </svg>
+                  </button>
+                </div>
+              );
+            })}
+          </div>
+        </aside>
+
+        {/* MAIN CHAT AREA */}
+        <div className="flex-1 flex flex-col overflow-hidden relative">
+          
+          {/* Scrollable message feed / Suggestions State */}
+          <main className="flex-1 overflow-y-auto px-6 py-6">
+            <div className="max-w-3xl mx-auto space-y-5">
+              
+              {/* If empty conversation (only system greeting exists), render Gemini style grid */}
+              {activeChat.messages.length <= 1 ? (
+                <div className="flex flex-col items-center justify-center py-6 space-y-8 animate-fade-in">
+                  
+                  {/* System greeting bubble */}
+                  <div className={`max-w-2xl px-5 py-4 rounded-lg text-sm text-center leading-relaxed ${
+                    theme === "dark" ? "bubble-assistant-dark" : "bubble-assistant-light"
+                  }`}>
+                    {activeChat.messages[0]?.content}
+                  </div>
+
+                  {/* Suggestions Header */}
+                  <div className="text-center">
+                    <span className="text-xs uppercase font-mono tracking-wider text-[#C6963C] block mb-1">
+                      Quick Start Prompts
+                    </span>
+                    <p className="text-[11px] text-slate-400">Select an analytics topic to load and query database trails.</p>
+                  </div>
+
+                  {/* Central Suggestions 2x2 Grid */}
+                  <div className="grid grid-cols-2 gap-4 w-full max-w-2xl">
+                    {DETAILED_PROMPT_SUGGESTIONS.map((s, idx) => (
+                      <button
+                        key={idx}
+                        onClick={() => handleSend(s.q)}
+                        className={`text-left p-4 rounded-lg border transition-all text-xs flex flex-col gap-2 shadow-sm hover:-translate-y-0.5 hover:shadow-md ${
+                          theme === "dark" 
+                            ? "bg-[#0f2745] border-[#1e3a5f] hover:border-[#C6963C] text-stone-200" 
+                            : "bg-white border-[#dde1e4] hover:border-[#C6963C] text-slate-800"
+                        }`}
+                      >
+                        <span className="font-semibold font-mono text-[#C6963C]">{s.title}</span>
+                        <span className="font-mono leading-relaxed opacity-95">{s.q}</span>
+                        <span className="text-[9px] text-slate-400 font-sans italic mt-auto">{s.desc}</span>
+                      </button>
+                    ))}
+                  </div>
+
+                </div>
+              ) : (
+                // Scrolling Messages thread
+                <div className="space-y-4">
+                  {activeChat.messages.map((msg, index) => {
+                    if (msg.isSystemNotice) {
+                      return (
+                        <div key={index} className="max-w-md mx-auto rounded p-2.5 text-[10px] text-center bubble-notice">
+                          {msg.content}
+                        </div>
+                      );
+                    }
+
+                    const isUser = msg.role === "user";
+                    return (
+                      <div 
+                        key={index} 
+                        className={`flex flex-col ${isUser ? "items-end" : "items-start"}`}
+                      >
+                        <div 
+                          className={`max-w-2xl px-4 py-3 rounded-lg text-sm leading-relaxed ${
+                            isUser 
+                              ? "bubble-user" 
+                              : theme === "dark" ? "bubble-assistant-dark" : "bubble-assistant-light"
+                          }`}
+                        >
+                          <p className="whitespace-pre-line">{msg.content}</p>
+
+                          {/* SVG forecast chart widget */}
+                          {!isUser && msg.forecastData && (
+                            <div className="mt-3">
+                              <ForecastChart data={msg.forecastData} theme={theme} />
+                            </div>
+                          )}
+
+                          {/* SVG redesigned tiered network graph widget */}
+                          {!isUser && msg.graphData && (
+                            <div className="mt-3">
+                              <NetworkGraph data={msg.graphData} theme={theme} />
+                            </div>
+                          )}
+
+                          {/* Reasoning logs drawer */}
+                          {!isUser && msg.route && msg.route !== "system" && (
+                            <ReasoningBlock 
+                              msg={msg} 
+                              theme={theme}
+                              isRawSqlPermitted={role === "analyst" || role === "supervisor"} 
+                            />
+                          )}
+                        </div>
+                        
+                        <span className="text-[10px] text-slate-400 mt-1 mx-2">
+                          {msg.timestamp}
+                        </span>
+                      </div>
+                    );
+                  })}
+                </div>
+              )}
               
               {loading && (
                 <div className="flex flex-col items-start">
@@ -668,7 +846,7 @@ export default function App() {
             }}
           >
             <div className="max-w-3xl mx-auto flex items-center gap-3">
-              {/* Mic Voice recognition button */}
+              {/* Mic STT button */}
               <button
                 type="button"
                 onClick={toggleMic}
@@ -687,7 +865,7 @@ export default function App() {
                 </svg>
               </button>
 
-              {/* Input text field */}
+              {/* Input field */}
               <input
                 type="text"
                 placeholder={
@@ -706,7 +884,7 @@ export default function App() {
                 }`}
               />
 
-              {/* Submit send button */}
+              {/* Submit button */}
               <button
                 onClick={() => handleSend()}
                 disabled={loading || !inputVal.trim()}
@@ -773,7 +951,7 @@ export default function App() {
 }
 
 // ---------------------------------------------------------------------------
-// SVG LINE CHART COMPONENT
+// SVG LINE CHART COMPONENT (Forecasts)
 // ---------------------------------------------------------------------------
 function ForecastChart({ data, theme }) {
   const points = [...data.historical, ...data.forecast];
@@ -796,10 +974,8 @@ function ForecastChart({ data, theme }) {
   const histCoords = data.historical.map((p, i) => getCoords(i, p.count));
   const forecastCoords = data.forecast.map((p, i) => getCoords(data.historical.length + i, p.count));
   
-  // Build lines SVG attributes
   const histLinePath = histCoords.reduce((path, p, i) => path + (i === 0 ? `M ${p.x} ${p.y}` : ` L ${p.x} ${p.y}`), "");
   
-  // Forecast starts from last historical coordinate
   const lastHist = histCoords[histCoords.length - 1];
   const forecastLinePath = lastHist 
     ? forecastCoords.reduce((path, p) => path + ` L ${p.x} ${p.y}`, `M ${lastHist.x} ${lastHist.y}`) 
@@ -811,33 +987,24 @@ function ForecastChart({ data, theme }) {
     }`}>
       <span className="font-semibold block mb-2 text-[#C6963C]">Time-Series Projection Dashboard</span>
       <svg viewBox={`0 0 ${chartWidth} ${chartHeight}`} className="w-full">
-        {/* Y Axis Grid lines */}
         <line x1={paddingX} y1={paddingY} x2={chartWidth - paddingX} y2={paddingY} stroke="#44516840" strokeWidth="0.5" />
         <line x1={paddingX} y1={chartHeight / 2} x2={chartWidth - paddingX} y2={chartHeight / 2} stroke="#44516840" strokeWidth="0.5" />
         <line x1={paddingX} y1={chartHeight - paddingY} x2={chartWidth - paddingX} y2={chartHeight - paddingY} stroke="#44516840" strokeWidth="0.5" />
         
-        {/* Y Axis Labels */}
         <text x={10} y={paddingY + 4} fill="#8391A3">{Math.round(maxCount)}</text>
         <text x={10} y={chartHeight - paddingY + 4} fill="#8391A3">{Math.round(minCount)}</text>
         
-        {/* Line Plots */}
-        {histLinePath && (
-          <path d={histLinePath} fill="none" stroke="#2563EB" strokeWidth="2.5" />
-        )}
-        {forecastLinePath && (
-          <path d={forecastLinePath} fill="none" stroke="#C6963C" strokeWidth="2.5" strokeDasharray="4 3" />
-        )}
+        {histLinePath && <path d={histLinePath} fill="none" stroke="#2563EB" strokeWidth="2.5" />}
+        {forecastLinePath && <path d={forecastLinePath} fill="none" stroke="#C6963C" strokeWidth="2.5" strokeDasharray="4 3" />}
 
-        {/* Historical Coordinate circles */}
         {histCoords.map((c, idx) => (
-          <circle key={`h-${idx}`} cx={c.x} cy={c.y} r="3.5" fill="#2563EB" />
+          <circle key={`h-${idx}`} cx={c.x} cy={c.y} r="3" fill="#2563EB" />
         ))}
-        {/* Forecast Coordinate circles */}
         {forecastCoords.map((c, idx) => (
-          <circle key={`f-${idx}`} cx={c.x} cy={c.y} r="3.5" fill="#C6963C" />
+          <circle key={`f-${idx}`} cx={c.x} cy={c.y} r="3" fill="#C6963C" />
         ))}
       </svg>
-      <div className="flex justify-between items-center text-[9px] text-slate-400 mt-2 px-6">
+      <div className="flex justify-between items-center text-[8px] text-slate-400 mt-2 px-6">
         <span className="flex items-center gap-1"><span className="w-2 h-2 bg-[#2563EB] inline-block rounded-full"></span> Historical Case counts</span>
         <span className="flex items-center gap-1"><span className="w-2 h-2 border-b-2 border-dashed border-[#C6963C] inline-block"></span> Regression Forecast (next 3M)</span>
       </div>
@@ -846,7 +1013,7 @@ function ForecastChart({ data, theme }) {
 }
 
 // ---------------------------------------------------------------------------
-// SVG NETWORK RELATIONSHIP GRAPH COMPONENT
+// SVG REDESIGNED TIED NETWORK GRAPH COMPONENT (Cubic Bezier Curves & Highlighting)
 // ---------------------------------------------------------------------------
 function NetworkGraph({ data, theme }) {
   const width = 360;
@@ -854,56 +1021,102 @@ function NetworkGraph({ data, theme }) {
   const nodes = data.nodes || [];
   const links = data.links || [];
 
-  // Static positioning around a circle
+  const [selectedNode, setSelectedNode] = useState(null);
+
+  // Group nodes by types for structured, clean horizontal tiers
+  const cases = nodes.filter((n) => n.type === "case");
+  const suspects = nodes.filter((n) => n.type === "accused");
+  const others = nodes.filter((n) => n.type !== "case" && n.type !== "accused");
+
   const nodePositions = {};
-  nodes.forEach((n, idx) => {
-    if (n.type === "case") {
-      // Put case center-left
-      nodePositions[n.id] = { x: 100, y: height / 2 };
-    } else if (n.type === "phone") {
-      // Put phone log link center-right
-      nodePositions[n.id] = { x: 260, y: height / 2 };
-    } else {
-      // Arrange accused suspect nodes vertically in between
-      const suspects = nodes.filter(nd => nd.type === "accused");
-      const susIdx = suspects.findIndex(s => s.id === n.id);
-      const gap = height / (sus_count_helper(suspects) + 1);
-      nodePositions[n.id] = { x: 180, y: gap * (susIdx + 1) };
-    }
+
+  // 1. Cases on Top Tier (y = 25)
+  cases.forEach((n, idx) => {
+    const gap = width / (cases.length + 1);
+    nodePositions[n.id] = { x: gap * (idx + 1), y: 25 };
   });
 
-  function sus_count_helper(arr) {
-    return arr.length || 1;
-  }
+  // 2. Suspects on Middle Tier (y = 75)
+  suspects.forEach((n, idx) => {
+    const gap = width / (suspects.length + 1);
+    nodePositions[n.id] = { x: gap * (idx + 1), y: 75 };
+  });
+
+  // 3. Others (Phones, Stations, and Assets) on Bottom Tier (y = 125)
+  others.forEach((n, idx) => {
+    const gap = width / (others.length + 1);
+    nodePositions[n.id] = { x: gap * (idx + 1), y: 125 };
+  });
+
+  // Check if a node is linked to the selected node
+  const isLinked = (nodeId) => {
+    if (!selectedNode) return true;
+    if (selectedNode === nodeId) return true;
+    return links.some(
+      (link) =>
+        (link.source === selectedNode && link.target === nodeId) ||
+        (link.target === selectedNode && link.source === nodeId)
+    );
+  };
+
+  const isLinkActive = (link) => {
+    if (!selectedNode) return true;
+    return link.source === selectedNode || link.target === selectedNode;
+  };
 
   return (
-    <div className={`mt-2 p-3 rounded border text-[10px] font-mono ${
+    <div className={`mt-2 p-3 rounded border text-[10px] font-mono select-none ${
       theme === "dark" ? "bg-[#0b1628] border-[#1e3a5f]" : "bg-slate-50 border-slate-200"
     }`}>
-      <span className="font-semibold block mb-2 text-[#C6963C]">Offender Relationship Network Graph</span>
+      <div className="flex items-center justify-between mb-2">
+        <span className="font-semibold text-[#C6963C]">Offender Relationship Network Graph</span>
+        {selectedNode && (
+          <button
+            onClick={() => setSelectedNode(null)}
+            className="text-[8px] border border-[#C6963C] text-[#C6963C] px-1 rounded hover:bg-[#C6963C] hover:text-stone-900 transition-all"
+          >
+            Clear Filter
+          </button>
+        )}
+      </div>
+
       <svg viewBox={`0 0 ${width} ${height}`} className="w-full">
-        {/* Draw Link Edges */}
+        {/* SVG filter for dropshadow elements */}
+        <defs>
+          <filter id="shadow" x="-20%" y="-20%" width="140%" height="140%">
+            <feDropShadow dx="0" dy="1.5" stdDeviation="1.5" floodColor="#000" floodOpacity="0.2" />
+          </filter>
+        </defs>
+
+        {/* Draw Links using Smooth Cubic Bezier Curves */}
         {links.map((link, idx) => {
-          const sourcePos = nodePositions[link.source];
-          const targetPos = nodePositions[link.target];
-          if (!sourcePos || !targetPos) return null;
+          const s = nodePositions[link.source];
+          const t = nodePositions[link.target];
+          if (!s || !t) return null;
+
+          // S-Curve Control Points
+          const cpY1 = s.y + (t.y - s.y) / 2;
+          const cpY2 = cpY1;
+          const pathD = `M ${s.x} ${s.y} C ${s.x} ${cpY1}, ${t.x} ${cpY2}, ${t.x} ${t.y}`;
+
+          const isActive = isLinkActive(link);
+          const strokeColor = isActive ? (link.type === "USES" ? "#EAB308" : "#EF4444") : "#475569";
+          const strokeWidth = isActive ? 1.5 : 0.5;
+
           return (
-            <g key={`l-${idx}`}>
-              <line
-                x1={sourcePos.x}
-                y1={sourcePos.y}
-                x2={targetPos.x}
-                y2={targetPos.y}
-                stroke="#64748b"
-                strokeWidth="1.5"
-                strokeDasharray={link.type === "USES" ? "3 3" : "0"}
+            <g key={`l-${idx}`} style={{ opacity: isActive ? 1 : 0.15, transition: "opacity 0.25s ease" }}>
+              <path
+                d={pathD}
+                fill="none"
+                stroke={strokeColor}
+                strokeWidth={strokeWidth}
+                strokeDasharray={link.type === "USES" ? "3 2" : "0"}
               />
-              {/* Midpoint arrow label */}
               <text
-                x={(sourcePos.x + targetPos.x) / 2}
-                y={(sourcePos.y + targetPos.y) / 2 - 2}
-                fill="#8391A3"
-                fontSize="7px"
+                x={(s.x + t.x) / 2}
+                y={(s.y + t.y) / 2 - 2}
+                fill={isActive ? "#94A3B8" : "#475569"}
+                fontSize="6px"
                 textAnchor="middle"
               >
                 {link.type}
@@ -912,24 +1125,70 @@ function NetworkGraph({ data, theme }) {
           );
         })}
 
-        {/* Draw Nodes */}
+        {/* Draw Nodes (Folder & Avatar Shapes) */}
         {nodes.map((node) => {
           const pos = nodePositions[node.id];
           if (!pos) return null;
-          
-          let fill = "#EF4444"; // accused
-          if (node.type === "case") fill = "#2563EB";
-          if (node.type === "phone") fill = "#EAB308";
+
+          const isNodeActive = isLinked(node.id);
+          const isCurrentSelected = selectedNode === node.id;
+
+          let color = "#EF4444"; // accused (red)
+          if (node.type === "case") color = "#2563EB"; // case (blue)
+          if (node.type === "phone") color = "#EAB308"; // asset/station (yellow)
 
           return (
-            <g key={node.id} transform={`translate(${pos.x},${pos.y})`}>
-              <circle r="8" fill={fill} stroke="#ffffff" strokeWidth="1" />
+            <g
+              key={node.id}
+              transform={`translate(${pos.x},${pos.y})`}
+              onClick={() => setSelectedNode(node.id)}
+              className="cursor-pointer"
+              style={{
+                opacity: isNodeActive ? 1 : 0.15,
+                transition: "opacity 0.25s ease"
+              }}
+            >
+              {/* Node Background Shapes */}
+              {node.type === "case" ? (
+                // Folder icon shape for Case Node
+                <path
+                  d="M -10 -7 L -4 -7 L -2 -4 L 10 -4 L 10 7 L -10 7 Z"
+                  fill={color}
+                  stroke={isCurrentSelected ? "#FFF" : "#0F172A"}
+                  strokeWidth={isCurrentSelected ? 1.5 : 1}
+                  filter="url(#shadow)"
+                />
+              ) : (
+                // Circle badge for suspects and assets
+                <circle
+                  r="8"
+                  fill={color}
+                  stroke={isCurrentSelected ? "#FFF" : "#0F172A"}
+                  strokeWidth={isCurrentSelected ? 1.5 : 1}
+                  filter="url(#shadow)"
+                />
+              )}
+
+              {/* Miniature Icon details inside Node shapes */}
+              {node.type === "accused" && (
+                // Tiny user avatar head/shoulders
+                <path d="M -4 5 C -4 2, -2 1, 0 1 C 2 1, 4 2, 4 5 Z M 0 -3 A 2 2 0 1 0 0 1 A 2 2 0 1 0 0 -3 Z" fill="#FFF" />
+              )}
+              {node.type === "phone" && (
+                // Tiny telephone/dot
+                <circle r="2" fill="#FFF" />
+              )}
+
+              {/* Node Labels */}
               <text
-                y="-11"
+                y={node.type === "case" ? "-11" : "-12"}
                 fill={theme === "dark" ? "#F1F5F9" : "#0F172A"}
                 fontSize="7px"
                 fontWeight="semibold"
                 textAnchor="middle"
+                style={{
+                  textShadow: theme === "dark" ? "1px 1px 2px #000" : "none"
+                }}
               >
                 {node.label}
               </text>
@@ -937,17 +1196,18 @@ function NetworkGraph({ data, theme }) {
           );
         })}
       </svg>
-      <div className="flex justify-between items-center text-[8px] text-slate-400 mt-2">
-        <span className="flex items-center gap-1"><span className="w-2 h-2 bg-[#2563EB] inline-block rounded-full"></span> Case ID</span>
-        <span className="flex items-center gap-1"><span className="w-2 h-2 bg-[#EF4444] inline-block rounded-full"></span> Suspect Accused</span>
-        <span className="flex items-center gap-1"><span className="w-2 h-2 bg-[#EAB308] inline-block rounded-full"></span> Phone Device Log</span>
+
+      <div className="flex justify-between items-center text-[7.5px] text-slate-400 mt-2 px-1 border-t border-slate-600 border-opacity-15 pt-2">
+        <span className="flex items-center gap-1"><span className="w-1.5 h-1.5 bg-[#2563EB] inline-block rounded-sm"></span> Case file (Top Tier)</span>
+        <span className="flex items-center gap-1"><span className="w-1.5 h-1.5 bg-[#EF4444] inline-block rounded-full"></span> Suspect (Mid Tier)</span>
+        <span className="flex items-center gap-1"><span className="w-1.5 h-1.5 bg-[#EAB308] inline-block rounded-full"></span> Device/PS (Bottom Tier)</span>
       </div>
     </div>
   );
 }
 
 // ---------------------------------------------------------------------------
-// COLLAPSIBLE REASONING AND CLASSIFICATION COMPONENT
+// COLLAPSIBLE REASONING COMPONENT
 // ---------------------------------------------------------------------------
 function ReasoningBlock({ msg, theme, isRawSqlPermitted }) {
   const [open, setOpen] = useState(false);
@@ -982,7 +1242,6 @@ function ReasoningBlock({ msg, theme, isRawSqlPermitted }) {
             <span className="font-bold">{msg.route.toUpperCase()} ROUTER</span>
           </div>
 
-          {/* Gate raw SQL based on roles: Analysts & Supervisors see SQL, others do not */}
           {msg.sql && (
             <div className="space-y-1">
               <div className="text-slate-400 flex items-center justify-between text-[9px]">

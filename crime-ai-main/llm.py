@@ -24,24 +24,27 @@ def ask_gemini(prompt):
     print("Prompt length:", len(prompt))
     print("=" * 80)
 
-    for i in range(5):
+    # Multi-model pool to handle free-tier daily quota exhaustion
+    models_to_try = ["gemini-2.5-flash", "gemini-1.5-flash", "gemini-1.5-pro"]
+    last_error = None
 
+    for model_name in models_to_try:
         try:
-
+            print(f"Attempting query with model: {model_name}...")
             response = client.models.generate_content(
-                model="gemini-2.5-flash",
+                model=model_name,
                 contents=prompt
             )
-
             return response.text.strip()
-
         except Exception as e:
+            last_error = e
+            print(f"Model {model_name} failed (possibly quota exhausted): {e}")
+            # Try next model immediately
+            continue
 
-            print(f"\nRetry {i+1}/5")
-            print(type(e).__name__)
-            print(e)
-
-            time.sleep(3)
+    # If all models in the pool failed, raise error to trigger safety mock fallback
+    print(f"All models in fallback pool exhausted. Last error: {last_error}")
+    raise last_error
 
     raise Exception("Gemini unavailable after multiple retries.")
 
@@ -80,10 +83,10 @@ def summarize_sql_result(question, sql, rows, history=None, language="en"):
     history_str = format_history(history)
     lang_inst = ""
     if language == "kn":
-        lang_inst = "\n- IMPORTANT: Respond in Kannada (ಕನ್ನಡ) language only. Translate your final answer completely to Kannada."
+        lang_inst = "\n- IMPORTANT: Respond in Kannada (Kannada) language only. Translate your final answer completely to Kannada."
 
     prompt = f"""
-You are an expert AI intelligence analyst helping users understand SQL query results.
+You are an expert crime data analyst.
 
 {history_str}
 
@@ -97,11 +100,10 @@ SQL Result:
 {rows}
 
 Instructions:
-- Provide a detailed and thorough analysis of the SQL query results.
-- Break down any numbers or counts, and list key statistical details.
-- Explain the significance of the result records in a structured manner.
-- Do not mention SQL syntax unless necessary.
-- Provide a detailed, multi-paragraph report.{lang_inst}
+- Summarize the SQL result in a clean, visual, and highly structured manner.
+- Keep the overall length moderate (mid-length, under 150 words).
+- Use clear headers, bold keywords, and bullet points (e.g. **Total Cases**, **Investigative Breakdown**).
+- Do not explain SQL syntax unless relevant. Keep it clean and highly readable.{lang_inst}
 """
 
     return ask_gemini(prompt)
@@ -115,10 +117,10 @@ def summarize_graph_result(question, context, history=None, language="en"):
     history_str = format_history(history)
     lang_inst = ""
     if language == "kn":
-        lang_inst = "\n- IMPORTANT: Respond in Kannada (ಕನ್ನಡ) language only. Translate your final answer completely to Kannada."
+        lang_inst = "\n- IMPORTANT: Respond in Kannada (Kannada) language only. Translate your final answer completely to Kannada."
 
     prompt = f"""
-You are an intelligent criminal investigation network analyst.
+You are an expert criminal network intelligence analyst.
 
 {history_str}
 
@@ -129,10 +131,10 @@ Retrieved Context:
 {context}
 
 Instructions:
-- Provide a detailed intelligence summary of the crime graph connections.
-- List all important people, case IDs, crimes, repeat offenders, and relational patterns.
-- Do NOT invent facts. Explain the relationships in a highly structured, comprehensive manner.
-- Provide a detailed, multi-paragraph report.{lang_inst}
+- Summarize the graph associations in a clean, visual, and highly structured format.
+- Keep the response mid-length (under 150 words).
+- Group key details under clear bold headings (e.g. **Suspect Profile**, **Relational Links**, **Modus Operandi**).
+- Use clean bullet points. Avoid wall-of-text paragraphs.{lang_inst}
 """
 
     return ask_gemini(prompt)
@@ -145,13 +147,13 @@ Instructions:
 def summarize_hybrid_result(question, context, history=None, language="en"):
     if not context.strip():
         if language == "kn":
-            return "ಪ್ರಶ್ನೆಗೆ ಹೊಂದಿಕೆಯಾಗುವ ಯಾವುದೇ ಪ್ರಕರಣಗಳು ಕಂಡುಬಂದಿಲ್ಲ."
+            return "No matching cases were found for the query."
         return "No matching cases were found for the query."
 
     history_str = format_history(history)
     lang_inst = ""
     if language == "kn":
-        lang_inst = "\n- IMPORTANT: Respond in Kannada (ಕನ್ನಡ) language only. Translate your final investigation report completely to Kannada."
+        lang_inst = "\n- IMPORTANT: Respond in Kannada (Kannada) language only. Translate your final investigation report completely to Kannada."
 
     prompt = f"""
 You are a senior criminal intelligence investigator.
@@ -167,10 +169,10 @@ Investigation Context:
 {context}
 
 Instructions:
-- Never invent names, locations, or crimes.
-- Detail the history, suspect relations, and patterns in a thorough manner.
-- Highlight repeat offenders, recurring associates, common crime patterns, and local police station jurisdictions.
-- Produce a detailed, structured, multi-paragraph investigation report.{lang_inst}
+- Write a clean, visual, and structured mid-length (under 150 words) investigation brief.
+- Never invent names or details.
+- Use bullet points and bold section headers (e.g. **Key Suspects**, **Case Narrative**, **Next Steps**).
+- Ensure the layout is highly readable at a glance. Avoid long paragraphs.{lang_inst}
 
 Investigation Report:
 """

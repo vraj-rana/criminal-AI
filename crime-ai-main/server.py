@@ -27,6 +27,8 @@ try:
     )
     from graph_agent import graph_rag, build_context
     from hybrid_agent import hybrid_search
+    from case_lookup import get_case_id
+    from graph_analysis import analyze_case
     HAS_BACKEND_DEPS = True
 except Exception as e:
     print(f"Warning: Backend dependencies missing or failed to import ({e}). Falling back to mock modes.", file=sys.stderr)
@@ -53,7 +55,7 @@ class QueryRequest(BaseModel):
     language: Optional[str] = "en"
     role: Optional[str] = "investigator"
 
-# Pre-packaged node networks for graph renders
+# Pre-packaged fallback node network for offline mockup runs
 MOCK_GRAPH_DATA = {
     "nodes": [
         {"id": "Ramesh Kumar", "type": "accused", "label": "Ramesh Kumar (Suspect)"},
@@ -69,6 +71,73 @@ MOCK_GRAPH_DATA = {
         {"source": "Ramesh Kumar", "target": "Phone Log Links", "type": "USES"}
     ]
 }
+
+def build_dynamic_graph(case_ids: list) -> dict:
+    """Queries case entities in sqlite to map nodes and link connections dynamically."""
+    if not HAS_BACKEND_DEPS or not case_ids:
+        return MOCK_GRAPH_DATA
+        
+    nodes = []
+    links = []
+    node_ids = set()
+    
+    # Cap at top 3 cases for visual clarity in chat bubble SVG
+    for case_id in case_ids[:3]:
+        try:
+            analysis = analyze_case(case_id)
+            if not analysis:
+                continue
+                
+            # 1. Add Case Node
+            if case_id not in node_ids:
+                node_ids.add(case_id)
+                nodes.append({
+                    "id": case_id,
+                    "type": "case",
+                    "label": f"{case_id} ({analysis.get('crime') or 'Crime'})"
+                })
+                
+            # 2. Add Police Station Anchor Node if exists
+            station = analysis.get("station")
+            if station:
+                station_id = f"STATION_{station}"
+                if station_id not in node_ids:
+                    node_ids.add(station_id)
+                    nodes.append({
+                        "id": station_id,
+                        "type": "phone",  # Displayed as yellow anchor node in SVG
+                        "label": f"{station} PS"
+                    })
+                links.append({
+                    "source": case_id,
+                    "target": station_id,
+                    "type": "REPORTED_AT"
+                })
+                
+            # 3. Add Accused Suspect Nodes
+            for person in analysis.get("persons", []):
+                p_name = person["name"]
+                p_id = f"PERSON_{p_name}"
+                if p_id not in node_ids:
+                    node_ids.add(p_id)
+                    nodes.append({
+                        "id": p_id,
+                        "type": "accused",
+                        "label": f"{p_name} ({'Repeat' if person['repeat_offender'] else 'Accused'})"
+                    })
+                links.append({
+                    "source": p_id,
+                    "target": case_id,
+                    "type": "ACCUSED_IN"
+                })
+                
+        except Exception as ex:
+            print(f"Error compiling dynamic graph for case {case_id}: {ex}")
+            
+    if not nodes:
+        return MOCK_GRAPH_DATA
+        
+    return {"nodes": nodes, "links": links}
 
 def get_mock_response(question: str, route: str, role: str, language: str):
     """Fallback generator for mock data when GEMINI_API_KEY is not set or network fails."""
@@ -89,11 +158,11 @@ def get_mock_response(question: str, route: str, role: str, language: str):
         )
         if language == "kn":
             answer = (
-                "ಐತಿಹಾಸಿಕ ದತ್ತಾಂಶದ ಆಧಾರದ ಮೇಲೆ, ಮೈಸೂರಿನಲ್ಲಿ ಕಳ್ಳತನ ಪ್ರಕರಣಗಳಲ್ಲಿ ಸ್ವಲ್ಪ ಏರಿಕೆಯಾಗುವ ಪ್ರವೃತ್ತಿಯನ್ನು ಅಂದಾಜಿಸಲಾಗಿದೆ. "
-                "ಮುಂದಿನ 3 ತಿಂಗಳ ಅಂದಾಜುಗಳು: ಜುಲೈ 2026: 28.50, ಆಗಸ್ಟ್ 2026: 29.75, ಸೆಪ್ಟೆಂಬರ್ 2026: 31.00 ಪ್ರಕರಣಗಳು. "
-                "ವಿಧಾನ: ಸರಳ ರೇಖೀಯ ಪ್ರವೃತ್ತಿ ಪ್ರಕ್ಷೇಪಣ."
+                "[Kannada Mock Output] Based on historical data, the forecast indicates a slight upward trend in Burglary cases in Mysuru. "
+                "Estimated counts: July 2026: 28.50, August 2026: 29.75, September 2026: 31.00 cases. "
+                "Methodology: Simple linear trend projection."
             )
-            explanation = "ಕನ್ನಡ ಅನುವಾದಿತ ಸರಳ ರೇಖೀಯ ಪ್ರವೃತ್ತಿ ಪ್ರಕ್ಷೇಪಣ."
+            explanation = "Kannada Mock: Linear regression projection calculation."
             
         sql_query = "SELECT strftime('%Y-%m', CrimeRegisteredDate) as month, COUNT(*) FROM CaseMaster WHERE District='Mysuru' GROUP BY month;"
         return {
@@ -124,7 +193,10 @@ def get_mock_response(question: str, route: str, role: str, language: str):
     elif "00456" in q or "repeat offender" in q or "associate" in q or "network" in q:
         answer = "Based on the investigation context, 3 prior associations were found for the accused linked to Case KA-19-2026-00456. Ramesh Kumar (Primary Accused) has a history of prior arrests in Mysuru and Hassan for organized burglaries. Two known associates, Suresh Gowda and Anil Hegde, are also linked to this case network."
         if language == "kn":
-            answer = "ತನಿಖೆಯ ಸಂದರ್ಭದ ಆಧಾರದ ಮೇಲೆ, ಪ್ರಕರಣ KA-19-2026-00456 ಕ್ಕೆ ಸಂಬಂಧಿಸಿದ ಆರೋಪಿಗಳಿಗೆ 3 ಹಿಂದಿನ ಸಂಬಂಧಗಳು ಕಂಡುಬಂದಿವೆ. ರಮೇಶ್ ಕುಮಾರ್ (ಮುಖ್ಯ ಆರೋಪಿ) ಮೈಸೂರು ಮತ್ತು ಹಾಸನದಲ್ಲಿ ಸಂಘಟಿತ ಕಳ್ಳತನಕ್ಕಾಗಿ ಬಂಧನಕ್ಕೊಳಗಾದ ಇತಿಹಾಸ ಹೊಂದಿದ್ದಾನೆ. ಸುರೇಶ್ ಗೌಡ ಮತ್ತು ಅನಿಲ್ ಹೆಗಡೆ ಎಂಬ ಇಬ್ಬರು ಪರಿಚಿತ ಸಹಚರರು ಕೂಡ ಈ ಪ್ರಕರಣದ ಜಾಲಕ್ಕೆ ಸೇರಿದ್ದಾರೆ."
+            answer = (
+                "[Kannada Mock Output] Based on the investigation context, 3 prior associations were found for Case KA-19-2026-00456. "
+                "Accused Ramesh Kumar has prior arrests in Mysuru and Hassan. Associates Suresh Gowda and Anil Hegde are linked."
+            )
             
         sql_query = "SELECT DISTINCT CM.CrimeNo, PI.FullName, PI.IsRepeatOffender FROM Accused A JOIN CaseMaster CM ON A.CaseMasterID = CM.CaseMasterID JOIN PersonIdentity PI ON A.PersonIdentityID = PI.PersonIdentityID WHERE CM.CaseNo = 'KA-19-2026-00456' AND PI.IsRepeatOffender = 1;"
         return {
@@ -141,7 +213,7 @@ def get_mock_response(question: str, route: str, role: str, language: str):
     else:
         answer = f"Investigation context for '{question}' was retrieved from the crime database. Suspect Ramesh Kumar has been linked to the crime ring through common phone logs. Source: Accused records, Case: KA-19-2026-00456."
         if language == "kn":
-            answer = f"ನಿಮ್ಮ ಪ್ರಶ್ನೆಗೆ ತನಿಖೆಯ ವಿವರಗಳನ್ನು ಪಡೆಯಲಾಗಿದೆ. ರಮೇಶ್ ಕುಮಾರ್ ಫೋನ್ ದಾಖಲೆಗಳ ಮೂಲಕ ಕಳ್ಳತನ ಜಾಲಕ್ಕೆ ಲಿಂಕ್ ಹೊಂದಿದ್ದಾನೆ. ಮೂಲ: ಆರೋಪಿಗಳ ದಾಖಲೆಗಳು, ಪ್ರಕರಣ: KA-19-2026-00456."
+            answer = f"[Kannada Mock Output] Details for '{question}' retrieved. Ramesh Kumar has log links to the crime group. Source: Accused records, Case: KA-19-2026-00456."
             
         return {
             "question": question,
@@ -260,7 +332,7 @@ Instructions:
 - Mention the forecasted values clearly.
 """
             if language == "kn":
-                prompt += "\n- IMPORTANT: Respond in Kannada (ಕನ್ನಡ) language only. Translate the entire report completely to Kannada."
+                prompt += "\n- IMPORTANT: Respond in Kannada (Kannada) language only. Translate the entire report completely to Kannada."
                 
             answer = ask_gemini(prompt)
             sql_executed = f"SELECT strftime('%Y-%m', CM.CrimeRegisteredDate) FROM CaseMaster JOIN CrimeSubHead CS ON CM.CrimeMinorHeadID = CS.CrimeSubHeadID JOIN Unit U ON CM.PoliceStationID = U.UnitID WHERE CS.CrimeHeadName LIKE '{crime_type}' AND U.UnitName LIKE '{district}' GROUP BY month;"
@@ -304,6 +376,13 @@ Instructions:
             context = build_context(docs)
             answer = summarize_graph_result(question, context, history=history_list, language=language)
             
+            # Extract case IDs from docs to dynamically build graph
+            candidate_case_ids = []
+            for doc in docs:
+                for entity in doc.get("linked_entity_ids", []):
+                    if entity.startswith("CASE_") and entity not in candidate_case_ids:
+                        candidate_case_ids.append(entity)
+            
             res = {
                 "question": question,
                 "route": route,
@@ -311,7 +390,7 @@ Instructions:
                 "sql": None,
                 "sql_results": None,
                 "context": context,
-                "graph_data": MOCK_GRAPH_DATA
+                "graph_data": build_dynamic_graph(candidate_case_ids)
             }
             log_query(question, route, None, role, "Anonymous")
             return res
@@ -322,6 +401,18 @@ Instructions:
             sql_executed = sql
             answer = summarize_hybrid_result(question, context, history=history_list, language=language)
             
+            # Extract case IDs from SQL results
+            candidate_case_ids = []
+            seen = set()
+            for row in rows:
+                if len(row) > 0:
+                    crime_no = str(row[0])
+                    if crime_no not in seen:
+                        seen.add(crime_no)
+                        case_id = get_case_id(crime_no)
+                        if case_id:
+                            candidate_case_ids.append(case_id)
+            
             res = {
                 "question": question,
                 "route": route,
@@ -329,7 +420,7 @@ Instructions:
                 "sql": sql if role in ["analyst", "supervisor"] else None,
                 "sql_results": [list(row) for row in rows],
                 "context": context,
-                "graph_data": MOCK_GRAPH_DATA
+                "graph_data": build_dynamic_graph(candidate_case_ids)
             }
             log_query(question, route, sql_executed, role, "Anonymous")
             return res
