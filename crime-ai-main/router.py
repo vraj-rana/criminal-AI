@@ -21,6 +21,30 @@ AGGREGATION_KEYWORDS = [
     "ratio"
 ]
 
+CHAT_KEYWORDS = [
+    "hey",
+    "hello",
+    "hi",
+    "how are you",
+    "who are you",
+    "what are you doing",
+    "what is your name",
+    "what you doing",
+    "help",
+    "good morning",
+    "good afternoon",
+    "good evening",
+    "sup",
+    "greet",
+    "what can you do",
+    "what can u do",
+    "what can i do",
+    "what is this",
+    "capabilities",
+    "about",
+    "how to use"
+]
+
 NETWORK_KEYWORDS = [
     "organized crime",
     "gang",
@@ -50,7 +74,23 @@ SQL_KEYWORDS = [
     "highest",
     "lowest",
     "district",
-    "station"
+    "station",
+    "show",
+    "list",
+    "find",
+    "get",
+    "cases",
+    "incidents",
+    "records",
+    "burglary",
+    "theft",
+    "murder",
+    "robbery",
+    "extortion",
+    "assault",
+    "kidnapping",
+    "crime group",
+    "crime type"
 ]
 
 HYBRID_KEYWORDS = [
@@ -71,79 +111,75 @@ HYBRID_KEYWORDS = [
 
 def route_question_llm(question):
     """
-    Classify the natural language query into exactly one of ["sql", "graph", "hybrid", "forecast", "network"]
-    using a single cheap model call.
+    Classify the natural language query into exactly one of ["sql", "graph", "hybrid", "forecast", "network", "chat"]
+    using our shared robust ask_gemini failover pool.
     """
     try:
-        from llm import client
+        from llm import ask_gemini
         prompt = f"""
-Classify the following natural language query from an investigator into exactly one of these five route categories:
+Classify the following natural language query from an investigator into exactly one of these six route categories:
 - "forecast" (if it asks for prediction, trend projection, or future caseload estimate)
 - "sql" (if it asks for a specific count, average, max, min, calculation, or direct database table values)
 - "network" (if it asks about organized crime networks, gangs, criminal rings, crews, syndicates)
 - "hybrid" (if it asks about repeat offenders, prior arrest history of individuals, or associates)
+- "chat" (if it is a greeting, general greeting, hello, or conversational comment not related to crime files)
 - "graph" (if it asks about similar cases, modus operandi connections, case narratives, or semantic searches)
-
-Few-shot examples:
-"What is the average age of accused persons in murder cases?" -> sql
-"How many burglary cases were reported in Mysuru last month?" -> sql
-"Show me the criminal network around Case CASE_541" -> graph
-"Who are the repeat offenders in Belagavi district?" -> hybrid
-"Predict theft trends for next month in Bengaluru" -> forecast
-"Is there an organized crime network operating in Davanagere?" -> network
-"What crimes is Liam Chacko associated with?" -> graph
 
 Query: "{question}"
 
-Return exactly one word (either "sql", "graph", "hybrid", "forecast", or "network") and absolutely nothing else.
+Return exactly one word (either "sql", "graph", "hybrid", "forecast", "network", or "chat") and absolutely nothing else.
 """
-        response = client.models.generate_content(
-            model="gemini-2.5-flash",
-            contents=prompt
-        )
-        label = response.text.strip().lower().replace('"', '').replace("'", "")
-        if label in ["sql", "graph", "hybrid", "forecast", "network"]:
+        response_text = ask_gemini(prompt)
+        label = response_text.strip().lower().replace('"', '').replace("'", "")
+        if label in ["sql", "graph", "hybrid", "forecast", "network", "chat"]:
             return label
     except Exception as e:
-        print(f"LLM routing failed: {e}. Falling back to keyword router.", file=sys.stderr)
+        print("[Router] LLM routing unavailable (Quota). Using keyword fallback.", file=sys.stderr)
     return None
 
 def route_question(question):
-    # Try LLM router first (stretch goal, Fix 1)
-    llm_route = route_question_llm(question)
-    if llm_route:
-        return llm_route
+    # Bypassed LLM routing to conserve API quota limits (saves 1 API request per query)
+    # llm_route = route_question_llm(question)
+    # if llm_route:
+    #     return llm_route
 
-    q = question.lower()
+    q = question.lower().strip()
+
+    # Simple exact greeting match check
+    if q in ["hey", "hello", "hi", "sup"]:
+        return "chat"
 
     # 1. Forecast is checked first
     for word in FORECAST_KEYWORDS:
         if word in q:
             return "forecast"
 
-    # 2. Aggregation / Statistical terms check immediately follows Forecast (Fix 1)
-    # Aggregation questions must win over relational keywords like 'accused'/'associate' —
-    # a question asking for a number should never be answered by narrative retrieval.
+    # 2. Aggregation / Statistical terms check immediately follows Forecast
     for word in AGGREGATION_KEYWORDS:
         if word in q:
             return "sql"
 
-    # 3. Network route keywords (Fix 2)
+    # 3. Chat / Greeting keywords
+    for word in CHAT_KEYWORDS:
+        if word in q:
+            return "chat"
+
+    # 4. Network route keywords
     for word in NETWORK_KEYWORDS:
         if word in q:
             return "network"
 
-    # 4. Hybrid keywords
+    # 5. Hybrid keywords
     for word in HYBRID_KEYWORDS:
         if word in q:
             return "hybrid"
 
-    # 5. SQL keywords
+    # 6. SQL keywords
     for word in SQL_KEYWORDS:
         if word in q:
             return "sql"
 
-    # 6. Graph keywords
+    # 7. Graph keywords
     for word in GRAPH_KEYWORDS:
         if word in q:
             return "graph"

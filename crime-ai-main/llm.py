@@ -5,14 +5,21 @@ from dotenv import load_dotenv
 from google import genai
 
 # -----------------------------------------------------
-# Load API Key
+# Lazy Client Loader
 # -----------------------------------------------------
 
 load_dotenv()
 
-client = genai.Client(
-    api_key=os.getenv("GEMINI_API_KEY")
-)
+_client = None
+
+def get_client():
+    global _client
+    if _client is None:
+        api_key = os.getenv("GEMINI_API_KEY")
+        if not api_key:
+            raise ValueError("No GEMINI_API_KEY found in the environment configurations.")
+        _client = genai.Client(api_key=api_key)
+    return _client
 
 # -----------------------------------------------------
 # Generic Gemini Call (Fix Quota Failover)
@@ -24,12 +31,13 @@ def ask_gemini(prompt):
     print("=" * 80)
 
     # Multi-model pool to handle free-tier daily quota exhaustion
+    # Prioritize 2.0-flash and 1.5-flash (gemini-flash-latest) because they offer
+    # 1,500 requests per day on free tier, unlike 2.5 models which are capped at 20 RPD.
     models_to_try = [
-        "gemini-2.5-flash", 
-        "gemini-2.0-flash", 
-        "gemini-2.5-pro", 
-        "gemini-2.5-flash-lite", 
-        "gemini-flash-latest", 
+        "gemini-2.0-flash",
+        "gemini-flash-latest",
+        "gemini-2.5-flash",
+        "gemini-2.5-pro",
         "gemini-pro-latest"
     ]
     last_error = None
@@ -37,6 +45,7 @@ def ask_gemini(prompt):
     for model_name in models_to_try:
         try:
             print(f"Attempting query with model: {model_name}...")
+            client = get_client()
             response = client.models.generate_content(
                 model=model_name,
                 contents=prompt
@@ -44,7 +53,7 @@ def ask_gemini(prompt):
             return response.text.strip()
         except Exception as e:
             last_error = e
-            print(f"Model {model_name} failed (possibly quota exhausted): {e}", file=sys.stderr)
+            print(f"Model {model_name} not available (quota/auth check).", file=sys.stderr)
             continue
 
     print(f"All models in fallback pool exhausted. Last error: {last_error}", file=sys.stderr)
@@ -79,9 +88,8 @@ def format_history(history):
     formatted += "\n"
     return formatted
 
-
 # -----------------------------------------------------
-# Structured Prompt Template Builder (Fix 4)
+# Structured Prompt Template Builder
 # -----------------------------------------------------
 
 STRUCTURED_INSTRUCTIONS = """
@@ -90,9 +98,9 @@ Your response MUST strictly follow this exact Markdown format. Do not wrap the e
 **Summary:** <one or two sentence plain-language answer>
 
 **Key Findings:**
-- <finding 1, with specific numbers, names, or metrics inline — NEVER be vague>
-- <finding 2, with specific numbers, names, or metrics inline>
-- <finding 3, up to 5 max, no filler bullets>
+- **[Name of Suspect / Case ID / Metric Category]**: <specific details about this category, with critical metrics/numbers explicitly **bolded**>
+- **[Next Suspect / Next Category]**: <details with critical metrics/numbers explicitly **bolded**>
+- Up to 5 structured bullets max. Do not write generic sentences without stats/counts.
 
 **Details:**
 <1-2 short paragraphs only if genuinely needed beyond the bullets — omit this section completely if the bullet points already cover the findings>
@@ -100,7 +108,7 @@ Your response MUST strictly follow this exact Markdown format. Do not wrap the e
 Rules:
 - Be concise. Keep the total word count under 180 words.
 - Do not repeat the user's question back. Do not write a closing summary paragraph.
-- Every claim must carry its number, percentage, count, name, or metric inline. Do not use generic phrases like "a high risk" or "multiple cases" without naming the exact numbers.
+- Every claim must carry its number, percentage, count, name, or metric inline. Do not use generic phrases.
 """
 
 KANNADA_STRUCTURED_INSTRUCTIONS = """
@@ -109,9 +117,9 @@ Your response MUST strictly follow this exact Kannada Markdown format. Do not wr
 **ಸಾರಾಂಶ:** <ಒಂದು ಅಥವಾ ಎರಡು ವಾಕ್ಯಗಳಲ್ಲಿ ಸರಳ ಉತ್ತರ>
 
 **ಮುಖ್ಯಾಂಶಗಳು:**
-- <ಆರೋಪಿಯ ಹೆಸರು, ಪ್ರಕರಣ ಸಂಖ್ಯೆ ಅಥವಾ ನಿರ್ದಿಷ್ಟ ಸಂಖ್ಯೆಗಳನ್ನು ಒಳಗೊಂಡಿರುವ ಮುಖ್ಯಾಂಶ 1 — ಎಂದಿಗೂ ಅಸ್ಪಷ್ಟವಾಗಿರಬಾರದು>
-- <ನಿರ್ದಿಷ್ಟ ಸಂಖ್ಯೆಗಳನ್ನು ಒಳಗೊಂಡಿರುವ ಮುಖ್ಯಾಂಶ 2>
-- <ಮುಖ್ಯಾಂಶ 3, ಗರಿಷ್ಠ 5 ಬುಲೆಟ್‌ಗಳು ಮಾತ್ರ>
+- **[ಆರೋಪಿಯ ಹೆಸರು / ಪ್ರಕರಣ ಸಂಖ್ಯೆ / ವರ್ಗ]**: <ನಿರ್ದಿಷ್ಟ ವಿವರಗಳು, ಮುಖ್ಯ ಸಂಖ್ಯೆಗಳು ಮತ್ತು ಹೆಸರುಗಳನ್ನು **ದಪ್ಪ ಅಕ್ಷರಗಳಲ್ಲಿ (bold)** ಬರೆಯಿರಿ>
+- **[ಮುಂದಿನ ಆರೋಪಿ / ಮುಂದಿನ ಪ್ರಕರಣ]**: <ವಿವರಗಳು, ಮುಖ್ಯ ಸಂಖ್ಯೆಗಳನ್ನು **ದಪ್ಪ ಅಕ್ಷರಗಳಲ್ಲಿ (bold)** ಬರೆಯಿರಿ>
+- ಗರಿಷ್ಠ 5 ಬುಲೆಟ್‌ಗಳು ಮಾತ್ರ.
 
 **ವಿವರಗಳು:**
 <ಬುಲೆಟ್ ಪಾಯಿಂಟ್‌ಗಳ ಹೊರತಾಗಿ ಅಗತ್ಯವಿದ್ದರೆ ಮಾತ್ರ 1-2 ಸಣ್ಣ ಪ್ಯಾರಾಗ್ರಾಫ್ ವಿವರಣೆ — ಬುಲೆಟ್ ಪಾಯಿಂಟ್‌ಗಳಲ್ಲೇ ಎಲ್ಲ ಮಾಹಿತಿ ಇದ್ದರೆ ಈ ವಿಭಾಗವನ್ನು ಸಂಪೂರ್ಣವಾಗಿ ಬಿಟ್ಟುಬಿಡಿ>
@@ -119,9 +127,8 @@ Your response MUST strictly follow this exact Kannada Markdown format. Do not wr
 Rules:
 - Be concise. Keep the total word count under 180 words.
 - Respond completely in Kannada.
-- Every claim must carry its number, percentage, count, name, or metric inline. Do not use vague terms.
+- Every claim must carry its number, percentage, count, name, or metric inline.
 """
-
 
 # -----------------------------------------------------
 # SQL Result Summarization
@@ -151,7 +158,6 @@ Instructions:
 
     return ask_gemini(prompt)
 
-
 # -----------------------------------------------------
 # GraphRAG Result Summarization
 # -----------------------------------------------------
@@ -176,7 +182,6 @@ Instructions:
 """
 
     return ask_gemini(prompt)
-
 
 # -----------------------------------------------------
 # Hybrid Result Summarization
@@ -209,7 +214,6 @@ Instructions:
 """
 
     return ask_gemini(prompt)
-
 
 # -----------------------------------------------------
 # Network Result Summarization (Fix 2)

@@ -142,8 +142,42 @@ def build_dynamic_graph(case_ids: list) -> dict:
 
 def get_mock_response(question: str, route: str, role: str, language: str):
     """Fallback generator for mock data when GEMINI_API_KEY is not set or network fails."""
-    q = question.lower()
+    q = question.lower().strip()
     
+    # Chat / Conversational Mock
+    if route == "chat" or q in ["hey", "hello", "hi", "sup"]:
+        if "what can" in q or "capabilities" in q or "what is this" in q or "help" in q or "how to" in q:
+            answer = (
+                "**Summary:** I am Vigil AI, an advanced crime intelligence platform configured to assist investigators.\n\n"
+                "**Key Capabilities:**\n"
+                "- **SQL Analytics**: Query aggregates, average offender ages, and district stats.\n"
+                "- **Modularity Clusters**: Run automated community detection to uncover crew rings.\n"
+                "- **Predictive Trends**: Run regression forecasts to project future station caseloads.\n"
+                "- **Relational Graphs**: Build visual network diagrams linking case files and co-accused."
+            )
+            if language == "kn":
+                answer = (
+                    "**ಸಾರಾಂಶ:** ನಾನು ವಿಜಿಲ್ ಎಐ, ತನಿಖಾಧಿಕಾರಿಗಳಿಗೆ ಸಹಾಯ ಮಾಡಲು ವಿನ್ಯಾಸಗೊಳಿಸಲಾದ ಅಪರಾಧ ತನಿಖಾ ವೇದಿಕೆ.\n\n"
+                    "**ಪ್ರಮುಖ ಸಾಮರ್ಥ್ಯಗಳು:**\n"
+                    "- **ಅಪರಾಧ ಜಾಲ ಪತ್ತೆ**: ಸಮುದಾಯ ಪತ್ತೆ ಹಚ್ಚುವಿಕೆ ಮೂಲಕ ಸಕ್ರಿಯ ಗ್ಯಾಂಗ್‌ಗಳನ್ನು ಗುರುತಿಸುವುದು.\n"
+                    "- **ಅಪರಾಧ ಪ್ರವೃತ್ತಿ ಮುನ್ಸೂಚನೆ**: ಪ್ರಕರಣಗಳ ಭವಿಷ್ಯದ ಸಂಖ್ಯೆಯನ್ನು ಅಂದಾಜಿಸುವುದು.\n"
+                    "- **ಡೇಟಾಬೇಸ್ ವಿಶ್ಲೇಷಣೆ**: ನೇರವಾಗಿ ಪ್ರಶ್ನಿಸುವುದು."
+                )
+        else:
+            answer = "**Summary:** Hello! I am Vigil AI, your criminal intelligence assistant. How can I help you with your investigation today?"
+            if language == "kn":
+                answer = "**ಸಾರಾಂಶ:** ನಮಸ್ಕಾರ! ನಾನು ವಿಜಿಲ್ ಎಐ, ನಿಮ್ಮ ಅಪರಾಧ ತನಿಖಾ ಸಹಾಯಕಿ. ಇಂದು ನಿಮ್ಮ ಪ್ರಕರಣದ ತನಿಖೆಯಲ್ಲಿ ನಾನು ನಿಮಗೆ ಹೇಗೆ ಸಹಾಯ ಮಾಡಲಿ?"
+        
+        return {
+            "question": question,
+            "route": "chat",
+            "answer": answer,
+            "sql": None,
+            "sql_results": None,
+            "context": "General conversation.",
+            "graph_data": None
+        }
+
     # 1. Forecasting Mock
     if route == "forecast" or "predict" in q or "forecast" in q:
         explanation = (
@@ -521,12 +555,77 @@ Instructions:
             }
             log_query(question, route, None, role, "Anonymous")
             return res
+
+        # F. CHAT / CONVERSATIONAL ROUTE
+        elif route == "chat":
+            prompt = f"You are Vigil AI, an advanced crime intelligence assistant. Respond to this general message naturally and briefly (under 50 words): '{question}'"
+            if language == "kn":
+                prompt += "\nRespond in Kannada language only."
+            answer = ask_gemini(prompt)
+            res = {
+                "question": question,
+                "route": route,
+                "answer": f"**Summary:** {answer}",
+                "sql": None,
+                "sql_results": None,
+                "context": "General conversation.",
+                "graph_data": None
+            }
+            log_query(question, route, None, role, "Anonymous")
+            return res
             
     except Exception as e:
-        print(f"[API Error] Failed to run backend pipeline ({e}). Falling back to mock generator.", file=sys.stderr)
-        res = get_mock_response(question, route, role, language)
-        log_query(question, route, sql_executed or "FAILED_QUERY", role, "Anonymous")
-        return res
+        error_msg = str(e)
+        print(f"[API Error] Failed to run backend pipeline ({error_msg}).", file=sys.stderr)
+        
+        # Check if it was a rate limit error (429)
+        is_rate_limit = "quota" in error_msg.lower() or "limit" in error_msg.lower() or "429" in error_msg
+        
+        # Get the mock fallback response
+        fallback_res = get_mock_response(question, route, role, language)
+        
+        if os.getenv("GEMINI_API_KEY") and is_rate_limit:
+            # Prepend a highly visible warning banner explaining the rate limit but keeping the site operational!
+            warning_prefix = (
+                "> [!WARNING]\n"
+                "> **Gemini API Quota Exhausted**: Google free-tier rate limits were hit. "
+                "Displaying locally computed database summary.\n\n"
+            )
+            if language == "kn":
+                warning_prefix = (
+                    "> [!WARNING]\n"
+                    "> **ಜೆಮಿನಿ ಎಪಿಐ ಕೋಟಾ ಮುಕ್ತಾಯಗೊಂಡಿದೆ**: ಗೂಗಲ್ ಎಪಿಐ ಮಿತಿ ತಲುಪಿದೆ. "
+                    "ಸ್ಥಳೀಯ ಡೇಟಾಬೇಸ್ ಸಾರಾಂಶವನ್ನು ಪ್ರದರ್ಶಿಸಲಾಗುತ್ತಿದೆ.\n\n"
+                )
+            
+            fallback_res["answer"] = warning_prefix + fallback_res["answer"]
+            fallback_res["context"] = f"Fallback due to Gemini 429 rate limit. (Trace: {error_msg})"
+            log_query(question, route, sql_executed or "QUOTA_FALLBACK_MOCK", role, "Anonymous")
+            return fallback_res
+            
+        elif os.getenv("GEMINI_API_KEY"):
+            # For other non-rate-limit issues (e.g. real database error, code bugs), show the error details so they can debug:
+            user_friendly_msg = "**Summary:** The query pipeline encountered a backend error.\n\n**Key Findings:**\n"
+            if "sql" in error_msg.lower() or "sqlite3" in error_msg.lower():
+                user_friendly_msg += "- **[Database Query Error]**: Could not formulate or execute a valid SQLite query for these specific criteria. Try reframing the search keywords."
+            else:
+                user_friendly_msg += f"- **[Pipeline Exception]**: Operation failed with message: `{error_msg}`. Ensure query context fits case history parameters."
+                
+            res = {
+                "question": question,
+                "route": route,
+                "answer": user_friendly_msg,
+                "sql": sql_executed,
+                "sql_results": None,
+                "context": f"Error traceback: {error_msg}",
+                "graph_data": None
+            }
+            log_query(question, route, sql_executed or "FAILED_PIPELINE", role, "Anonymous")
+            return res
+            
+        # Fall back to raw mock only when running in offline/mock demo mode (no API key configured)
+        log_query(question, route, sql_executed or "MOCK_FALLBACK", role, "Anonymous")
+        return fallback_res
 
 if __name__ == "__main__":
     import uvicorn
