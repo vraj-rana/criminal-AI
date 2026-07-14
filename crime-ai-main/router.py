@@ -1,5 +1,6 @@
 import os
 import sys
+import re
 
 FORECAST_KEYWORDS = [
     "predict",
@@ -15,7 +16,6 @@ AGGREGATION_KEYWORDS = [
     "count",
     "maximum",
     "minimum",
-    "sum",
     "total number",
     "percentage",
     "ratio"
@@ -24,7 +24,6 @@ AGGREGATION_KEYWORDS = [
 CHAT_KEYWORDS = [
     "hey",
     "hello",
-    "hi",
     "how are you",
     "who are you",
     "what are you doing",
@@ -41,7 +40,6 @@ CHAT_KEYWORDS = [
     "what can i do",
     "what is this",
     "capabilities",
-    "about",
     "how to use"
 ]
 
@@ -51,7 +49,8 @@ NETWORK_KEYWORDS = [
     "criminal ring",
     "network of",
     "crew",
-    "syndicate"
+    "syndicate",
+    "criminal network"
 ]
 
 GRAPH_KEYWORDS = [
@@ -62,15 +61,12 @@ GRAPH_KEYWORDS = [
     "relationship",
     "cluster",
     "modus",
-    "mo",
     "pattern",
     "linked",
-    "related",
-    "criminal network"
+    "related"
 ]
 
 SQL_KEYWORDS = [
-    "top",
     "highest",
     "lowest",
     "district",
@@ -78,7 +74,6 @@ SQL_KEYWORDS = [
     "show",
     "list",
     "find",
-    "get",
     "cases",
     "incidents",
     "records",
@@ -100,7 +95,6 @@ HYBRID_KEYWORDS = [
     "history",
     "associate",
     "associates",
-    "criminal network",
     "involved",
     "accused",
     "suspect",
@@ -108,6 +102,10 @@ HYBRID_KEYWORDS = [
     "who was involved",
     "known associates"
 ]
+
+def _has_keyword(q: str, phrase: str) -> bool:
+    pattern = r"\b" + r"\s+".join(re.escape(w) for w in phrase.split()) + r"\b"
+    return re.search(pattern, q) is not None
 
 def route_question_llm(question):
     """
@@ -138,53 +136,64 @@ Return exactly one word (either "sql", "graph", "hybrid", "forecast", "network",
     return None
 
 def route_question(question):
-    # Bypassed LLM routing to conserve API quota limits (saves 1 API request per query)
-    # llm_route = route_question_llm(question)
-    # if llm_route:
-    #     return llm_route
-
     q = question.lower().strip()
-
-    # Simple exact greeting match check
     if q in ["hey", "hello", "hi", "sup"]:
         return "chat"
 
-    # 1. Forecast is checked first
-    for word in FORECAST_KEYWORDS:
-        if word in q:
-            return "forecast"
+    matched_categories = []
+    
+    categories = [
+        ("forecast", FORECAST_KEYWORDS),
+        ("network", NETWORK_KEYWORDS),
+        ("hybrid", HYBRID_KEYWORDS),
+        ("sql", AGGREGATION_KEYWORDS + SQL_KEYWORDS),
+        ("chat", CHAT_KEYWORDS),
+        ("graph", GRAPH_KEYWORDS)
+    ]
+    
+    for category, keywords in categories:
+        if any(_has_keyword(q, w) for w in keywords):
+            matched_categories.append(category)
 
-    # 2. Aggregation / Statistical terms check immediately follows Forecast
-    for word in AGGREGATION_KEYWORDS:
-        if word in q:
-            return "sql"
+    # Confident single match -> use it directly, no API call
+    if len(matched_categories) == 1:
+        return matched_categories[0]
 
-    # 3. Chat / Greeting keywords
-    for word in CHAT_KEYWORDS:
-        if word in q:
-            return "chat"
+    # If multiple matches, handle specific override constraints
+    if len(matched_categories) > 1:
+        # Override: modus/pattern search should go to graph even if sql keywords are present
+        if "graph" in matched_categories:
+            if any(w in q for w in ["modus", "pattern", "relationship", "similar"]):
+                return "graph"
+        # Override: gang/crew/network keyword queries should go to network even if SQL is present
+        if "network" in matched_categories:
+            if any(w in q for w in ["gang", "criminal network", "organized crime"]):
+                return "network"
+        # Override: aggregation SQL query should go to sql unless gang/network is mentioned
+        if "sql" in matched_categories:
+            if any(_has_keyword(q, w) for w in AGGREGATION_KEYWORDS):
+                if not any(w in q for w in ["gang", "criminal network", "organized crime"]):
+                    return "sql"
+                
+        specific = [c for c in ["forecast", "network", "hybrid"] if c in matched_categories]
+        if len(specific) == 1:
+            return specific[0]
 
-    # 4. Network route keywords
-    for word in NETWORK_KEYWORDS:
-        if word in q:
-            return "network"
+    # Ambiguous (0 matches, or multiple conflicting categories) -> ask the LLM once
+    llm_route = route_question_llm(question)
+    if llm_route:
+        # Double check gang override if LLM misclassifies
+        if "gang" in q or "criminal network" in q or "organized crime" in q:
+            if "network" in matched_categories:
+                return "network"
+        return llm_route
 
-    # 5. Hybrid keywords
-    for word in HYBRID_KEYWORDS:
-        if word in q:
-            return "hybrid"
+    # LLM unavailable (quota/offline) -> fall back to first match in priority order, else "graph"
+    priority_order = ["forecast", "network", "hybrid", "sql", "chat", "graph"]
+    for cat in priority_order:
+        if cat in matched_categories:
+            return cat
 
-    # 6. SQL keywords
-    for word in SQL_KEYWORDS:
-        if word in q:
-            return "sql"
-
-    # 7. Graph keywords
-    for word in GRAPH_KEYWORDS:
-        if word in q:
-            return "graph"
-
-    # Default
     return "graph"
 
 if __name__ == "__main__":

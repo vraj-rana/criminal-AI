@@ -1,0 +1,8 @@
+{
+  "client": {
+    "source": "dist"
+  },
+  "app_sail": {
+    "source": "crime-ai-main"
+  }
+}

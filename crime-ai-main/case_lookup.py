@@ -1,9 +1,12 @@
 import json
 
+import os
+
 crime_to_case = {}
 case_to_crime = {}
 
-with open("documents.jsonl", "r", encoding="utf8") as f:
+_dir = os.path.dirname(os.path.abspath(__file__))
+with open(os.path.join(_dir, "documents.jsonl"), "r", encoding="utf8") as f:
 
     for line in f:
 

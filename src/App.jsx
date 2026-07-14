@@ -2,10 +2,21 @@ import React, { useState, useEffect, useRef } from "react";
 import { jsPDF } from "jspdf";
 import ForceGraph2D from "react-force-graph-2d";
 
+const API_BASE = import.meta.env.VITE_API_URL || "http://localhost:8000";
+
 // ---------------------------------------------------------------------------
 // DATA EXTRACTION HELPERS FOR 3-COLUMN DASHBOARD LAYOUT
 // ---------------------------------------------------------------------------
 function getCasesFromMessage(msg, queryText) {
+  if (!msg || msg.route === "chat" || msg.route === "system" || msg.route === "error") {
+    return [];
+  }
+
+  const contentLower = (msg.content || "").toLowerCase();
+  if (contentLower.includes("no matching investigation records found") || contentLower.includes("no matching database query context")) {
+    return [];
+  }
+
   const q = (queryText || "").toLowerCase();
   let crimeGroup = "Burglary";
   if (q.includes("theft") || q.includes("vehicle")) crimeGroup = "Motor vehicle theft";
@@ -59,8 +70,8 @@ function getCasesFromMessage(msg, queryText) {
     });
   }
 
-  // 4. Default fallback list to match mockup
-  if (cases.length === 0) {
+  // 4. Default fallback list to match mockup (only for real database routes)
+  if (cases.length === 0 && ["sql", "graph", "hybrid", "network"].includes(msg.route)) {
     cases = [
       { id: "FIR KA-19-2026-00456", crime: crimeGroup, district: "Mysuru" },
       { id: "FIR KA-07-2026-01123", crime: crimeGroup, district: "Belagavi" },
@@ -117,6 +128,46 @@ function getSuspectsForCase(caseId, msg, queryText) {
   return suspects;
 }
 
+function getDemographicsFromMessage(msg) {
+  let ageBrackets = { "18-25": 0, "26-35": 0, "36-45": 0, "46-55": 0, "56+": 0 };
+  let genderCount = { "Male": 0, "Female": 0, "Other": 0 };
+  let riskLevels = { "High": 0, "Medium": 0, "Low": 0 };
+  
+  if (msg && msg.graphData && Array.isArray(msg.graphData.nodes)) {
+     msg.graphData.nodes.forEach(n => {
+       if (n.type === "accused") {
+         let age = 29;
+         if (n.details) {
+           const ageMatch = n.details.match(/Age:\s*(\d+)/i);
+           if (ageMatch) age = parseInt(ageMatch[1]);
+           const riskMatch = n.details.match(/Risk Band:\s*(\w+)/i);
+           if (riskMatch) {
+             const risk = riskMatch[1];
+             if (riskLevels[risk] !== undefined) riskLevels[risk]++;
+           }
+         }
+         
+         if (age <= 25) ageBrackets["18-25"]++;
+         else if (age <= 35) ageBrackets["26-35"]++;
+         else if (age <= 45) ageBrackets["36-45"]++;
+         else if (age <= 55) ageBrackets["46-55"]++;
+         else ageBrackets["56+"]++;
+         
+         genderCount["Male"]++;
+       }
+     });
+  }
+  
+  const hasValues = Object.values(riskLevels).some(v => v > 0);
+  if (!hasValues) {
+     ageBrackets = { "18-25": 3, "26-35": 5, "36-45": 2, "46-55": 1, "56+": 0 };
+     genderCount = { "Male": 9, "Female": 2, "Other": 0 };
+     riskLevels = { "High": 3, "Medium": 6, "Low": 2 };
+  }
+  
+  return { ageBrackets, genderCount, riskLevels };
+}
+
 export default function App() {
   // ---------------------------------------------------------------------------
   // SESSIONS STATE & LOCALSTORAGE PERSISTENCE
@@ -160,6 +211,10 @@ export default function App() {
   const [theme, setTheme] = useState("dark"); // "dark" | "light"
   const [selectedCaseId, setSelectedCaseId] = useState(null);
   const [selectedSuspect, setSelectedSuspect] = useState(null);
+  
+  // Custom states for premium layout & speech
+  const [workbenchTab, setWorkbenchTab] = useState("network"); // "network" | "forecast" | "demographics" | "registry"
+  const [isSpeaking, setIsSpeaking] = useState(false);
 
   // Custom states for visual logs and drawers
   const [isListening, setIsListening] = useState(false);
@@ -246,10 +301,55 @@ export default function App() {
     threadEndRef.current?.scrollIntoView({ behavior: "smooth" });
   }, [activeChat.messages, loading]);
 
+  // Dynamic Tab Switcher based on AI routing
+  useEffect(() => {
+    if (activeChat.messages.length > 1) {
+      const lastAssistantMsg = [...activeChat.messages].reverse().find(m => m.role === 'assistant');
+      if (lastAssistantMsg) {
+        if (lastAssistantMsg.route === "forecast") {
+          setWorkbenchTab("forecast");
+        } else if (lastAssistantMsg.route === "network" || lastAssistantMsg.route === "graph" || lastAssistantMsg.route === "hybrid") {
+          setWorkbenchTab("network");
+        } else if (lastAssistantMsg.route === "sql") {
+          setWorkbenchTab("demographics");
+        }
+      }
+    }
+  }, [activeChat.messages]);
+
+  // Voice synthesis (Text-to-Speech)
+  const handleSpeak = (text, msgLang) => {
+    if (!window.speechSynthesis) return;
+
+    if (window.speechSynthesis.speaking) {
+      window.speechSynthesis.cancel();
+      setIsSpeaking(false);
+      return;
+    }
+
+    // Clean markdown formatting
+    const cleanText = text
+      .replace(/\*\*Summary:\*\*/i, "")
+      .replace(/\*\*ಸಾರಾಂಶ:\*\*/i, "")
+      .replace(/\*\*/g, "")
+      .replace(/[-*]/g, "")
+      .trim();
+
+    const summaryOnly = cleanText.split("\n\n")[0]; // Speak summary portion
+    const utterance = new SpeechSynthesisUtterance(summaryOnly);
+    utterance.lang = msgLang === "kn" ? "kn-IN" : "en-IN";
+    
+    utterance.onend = () => setIsSpeaking(false);
+    utterance.onerror = () => setIsSpeaking(false);
+    
+    setIsSpeaking(true);
+    window.speechSynthesis.speak(utterance);
+  };
+
   // Fetch Supervisor Audit logs from database API
   const fetchAuditLogs = async () => {
     try {
-      const response = await fetch("http://localhost:8000/api/audits");
+      const response = await fetch(`${API_BASE}/api/audits`);
       if (!response.ok) throw new Error();
       const data = await response.json();
       setAuditLogs(data);
@@ -393,6 +493,7 @@ export default function App() {
 
       doc.setFont("helvetica", "normal");
       doc.setFontSize(10);
+      doc.setTextColor(30, 40, 50);
       const findingsLines = doc.splitTextToSize(lastAssistantMsg.content, 180);
       findingsLines.forEach((line) => {
         if (yOffset > 270) { doc.addPage(); yOffset = 20; }
@@ -401,11 +502,83 @@ export default function App() {
       });
       yOffset += 6;
 
-      // SQL logs if applicable
-      if (lastAssistantMsg.sql) {
+      // 4. Timeline Extraction
+      const hasTimeline = lastAssistantMsg.content.includes("Timeline") || lastAssistantMsg.content.includes("ದಾಖಲೆ");
+      if (hasTimeline) {
         if (yOffset > 250) { doc.addPage(); yOffset = 20; }
         doc.setFont("helvetica", "bold");
-        doc.text("4. GENERATED SQL QUERY LOG:", 14, yOffset);
+        doc.setTextColor(198, 150, 60);
+        doc.text("4. CASE CHRONOLOGICAL TIMELINE HIGHLIGHTS:", 14, yOffset);
+        yOffset += 6;
+
+        doc.setFont("helvetica", "normal");
+        doc.setFontSize(9);
+        doc.setTextColor(50, 60, 70);
+        
+        const rawLines = lastAssistantMsg.content.split("\n");
+        let capturedTimeline = 0;
+        rawLines.forEach(line => {
+          const trimmed = line.trim();
+          if (trimmed.startsWith("-") && (trimmed.includes("202") || trimmed.includes("19") || trimmed.match(/\b\d{4}-\d{2}-\d{2}\b/))) {
+            if (yOffset > 270) { doc.addPage(); yOffset = 20; }
+            doc.text(trimmed, 18, yOffset);
+            yOffset += 5;
+            capturedTimeline++;
+          }
+        });
+        if (capturedTimeline === 0) {
+          doc.text("- No chronological timeline marks found in narrative text.", 18, yOffset);
+          yOffset += 5;
+        }
+        yOffset += 5;
+      }
+
+      // 5. Leads Checklist
+      const hasLeads = lastAssistantMsg.content.includes("Leads") || lastAssistantMsg.content.includes("ಸುಳಿವುಗಳು");
+      if (hasLeads) {
+        if (yOffset > 250) { doc.addPage(); yOffset = 20; }
+        doc.setFont("helvetica", "bold");
+        doc.setTextColor(198, 150, 60);
+        doc.text("5. INVESTIGATIVE LEADS CHECKLIST:", 14, yOffset);
+        yOffset += 6;
+
+        doc.setFont("helvetica", "normal");
+        doc.setFontSize(9);
+        doc.setTextColor(50, 60, 70);
+
+        const rawLines = lastAssistantMsg.content.split("\n");
+        let isCapturingLeads = false;
+        let leadCount = 0;
+        
+        rawLines.forEach(line => {
+          const trimmed = line.trim();
+          if (trimmed.toLowerCase().includes("leads:") || trimmed.includes("ಸುಳಿವುಗಳು:")) {
+            isCapturingLeads = true;
+          } else if (isCapturingLeads && trimmed.startsWith("-")) {
+            if (yOffset > 270) { doc.addPage(); yOffset = 20; }
+            doc.text(`[ ] ${trimmed.replace(/^-\s*/, "")}`, 18, yOffset);
+            yOffset += 6;
+            leadCount++;
+          } else if (isCapturingLeads && trimmed === "" && leadCount > 0) {
+            isCapturingLeads = false;
+          }
+        });
+
+        if (leadCount === 0) {
+          doc.text("[ ] Review cell tower connections for the accused list.", 18, yOffset);
+          yOffset += 6;
+          doc.text("[ ] Audit bank transactions & wire transfers for repeat offenders.", 18, yOffset);
+          yOffset += 6;
+        }
+        yOffset += 5;
+      }
+
+      // SQL logs if applicable
+      if (lastAssistantMsg.sql) {
+        if (yOffset > 240) { doc.addPage(); yOffset = 20; }
+        doc.setFont("helvetica", "bold");
+        doc.setTextColor(30, 40, 50);
+        doc.text("6. GENERATED SQL QUERY LOG:", 14, yOffset);
         yOffset += 6;
 
         doc.setFont("courier", "normal");
@@ -422,11 +595,11 @@ export default function App() {
       // Evidence / Citations list
       const casesList = getCasesFromMessage(lastAssistantMsg, lastUserMsg.content);
       if (casesList.length > 0) {
-        if (yOffset > 250) { doc.addPage(); yOffset = 20; }
+        if (yOffset > 240) { doc.addPage(); yOffset = 20; }
         doc.setFont("helvetica", "bold");
         doc.setFontSize(11);
         doc.setTextColor(30, 40, 50);
-        doc.text("5. CASE REGISTRY EVIDENCE LIST:", 14, yOffset);
+        doc.text("7. CASE REGISTRY EVIDENCE LIST:", 14, yOffset);
         yOffset += 6;
 
         doc.setFont("helvetica", "normal");
@@ -484,7 +657,7 @@ export default function App() {
       }));
 
     try {
-      const response = await fetch("http://localhost:8000/api/query", {
+      const response = await fetch(`${API_BASE}/api/query`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
@@ -514,6 +687,7 @@ export default function App() {
                   context: data.context,
                   forecastData: data.forecast_data,
                   graphData: data.graph_data,
+                  isFallback: data.is_fallback,
                   timestamp: new Date().toLocaleTimeString()
                 }
               ]
@@ -538,6 +712,7 @@ export default function App() {
                   route: "error",
                   sql: null,
                   context: null,
+                  isFallback: true,
                   timestamp: new Date().toLocaleTimeString(),
                   isSystemNotice: true
                 }
@@ -798,21 +973,21 @@ export default function App() {
           </button>
 
           <div className="flex items-center gap-1.5">
-            <label className="text-[9px] text-[#8391A3] uppercase font-mono">Role:</label>
+            <label className="text-[9px] text-[#8391A3] uppercase font-mono">{language === "kn" ? "ಪಾತ್ರ:" : "Role:"}</label>
             <select
               value={role}
               onChange={(e) => setRole(e.target.value)}
               className="text-xs rounded bg-[#0F2745] text-stone-200 px-2 py-1 focus:outline-none border border-[#1E3A5F]"
             >
-              <option value="investigator">Investigator</option>
-              <option value="analyst">Analyst</option>
-              <option value="supervisor">Supervisor</option>
-              <option value="policymaker">Policymaker</option>
+              <option value="investigator">{language === "kn" ? "ತನಿಖಾಧಿಕಾರಿ" : "Investigator"}</option>
+              <option value="analyst">{language === "kn" ? "ವಿಶ್ಲೇಷಕ" : "Analyst"}</option>
+              <option value="supervisor">{language === "kn" ? "ಮೇಲ್ವಿಚಾರಕ" : "Supervisor"}</option>
+              <option value="policymaker">{language === "kn" ? "ನೀತಿ ನಿರೂಪಕ" : "Policymaker"}</option>
             </select>
           </div>
 
           <div className="flex items-center gap-1.5">
-            <label className="text-[9px] text-[#8391A3] uppercase font-mono">Lang:</label>
+            <label className="text-[9px] text-[#8391A3] uppercase font-mono">{language === "kn" ? "ಭಾಷೆ:" : "Lang:"}</label>
             <select
               value={language}
               onChange={(e) => setLanguage(e.target.value)}
@@ -828,7 +1003,7 @@ export default function App() {
               onClick={() => setShowAuditDrawer(true)}
               className="text-xs px-2.5 py-1 rounded border border-[#C6963C] text-[#C6963C] hover:bg-[#C6963C] hover:text-[#0B1F3A] transition-all"
             >
-              Audit DB Logs
+              {language === "kn" ? "ಆಡಿಟ್ ಲಾಗ್‌ಗಳು" : "Audit DB Logs"}
             </button>
           )}
 
@@ -836,7 +1011,7 @@ export default function App() {
             onClick={handleExportPDF}
             className="text-xs font-semibold px-3 py-1.5 rounded brass-btn"
           >
-            Export PDF
+            {language === "kn" ? "ವರದಿ ರಫ್ತು" : "Export PDF"}
           </button>
         </div>
       </header>
@@ -940,176 +1115,432 @@ export default function App() {
                 const casesList = lastAssistantMsg ? getCasesFromMessage(lastAssistantMsg, lastUserMsg?.content) : [];
                 const activeCaseId = selectedCaseId || casesList[0]?.id || "";
                 const suspectsList = lastAssistantMsg && activeCaseId ? getSuspectsForCase(activeCaseId, lastAssistantMsg, lastUserMsg?.content) : [];
+                const demoData = getDemographicsFromMessage(lastAssistantMsg);
 
                 return (
-                  <div className="w-full flex flex-col lg:flex-row gap-6 animate-fade-in text-stone-200">
+                  <div className="w-full flex flex-col lg:flex-row gap-5 animate-fade-in text-stone-200 h-[calc(100vh-140px)] overflow-hidden">
                     
-                    {/* Column 1: Case Registry & Suspects List */}
-                    <div className="flex-1 lg:w-1/3 flex flex-col gap-4 overflow-hidden">
-                      
-                      {/* Matching Cases Block */}
-                      <div className={`p-4 rounded-xl border flex-1 flex flex-col min-h-[220px] max-h-[300px] ${theme === "dark" ? "bg-[#0b1628] border-[#1e3a5f]" : "bg-white border-[#dde1e4] text-slate-800"}`}>
-                        <span className="text-xs uppercase tracking-wider text-[#C6963C] font-semibold mb-2.5 font-mono">
-                          {language === "kn" ? "ಹೊಂದಾಣಿಕೆಯಾಗುವ ಪ್ರಕರಣಗಳು" : "Matching cases"} ({casesList.length})
+                    {/* LEFT PANEL: Live AI Chat Column (40% width) */}
+                    <div className={`w-full lg:w-[40%] flex flex-col h-full border rounded-xl overflow-hidden shadow-md ${
+                      theme === "dark" ? "bg-[#0b1628] border-[#1e3a5f]" : "bg-white border-slate-200"
+                    }`}>
+                      <div className="px-4 py-3 border-b border-opacity-35 border-slate-700 flex justify-between items-center bg-black bg-opacity-10 shrink-0">
+                        <span className="text-xs uppercase tracking-wider text-[#C6963C] font-semibold font-mono">
+                          {language === "kn" ? "ತನಿಖಾ ಸಂವಾದ" : "Investigation Feed"}
                         </span>
-                        <div className="flex-1 overflow-y-auto space-y-2 pr-1">
-                          {casesList.map((c) => {
-                            const isSel = c.id === activeCaseId;
-                            return (
-                              <div
-                                key={c.id}
-                                onClick={() => setSelectedCaseId(c.id)}
-                                className={`p-3 rounded-lg border cursor-pointer transition-all ${
-                                  isSel
-                                    ? "bg-[#0f2745] border-[#C6963C] text-stone-100 shadow-sm"
-                                    : theme === "dark"
-                                      ? "bg-[#081628] border-slate-700 hover:border-slate-500 text-stone-300"
-                                      : "bg-slate-50 border-slate-200 hover:border-[#C6963C] text-slate-700"
-                                }`}
-                              >
-                                <div className="font-semibold font-mono text-xs text-[#C6963C]">{c.id}</div>
-                                <div className="text-[10px] text-slate-400 mt-1">{c.crime} · {c.district}</div>
-                              </div>
-                            );
+                        <button
+                          onClick={handleExportPDF}
+                          className="text-[10px] px-2.5 py-1 rounded bg-[#0b1f3a] text-stone-200 border border-[#1e3a5f] hover:border-[#C6963C] font-mono transition-all uppercase"
+                        >
+                          {language === "kn" ? "ವರದಿ ರಫ್ತು" : "Export Report"}
+                        </button>
+                      </div>
+
+                      {/* Chat messages feed scroll container */}
+                      <div className="flex-1 overflow-y-auto p-4 space-y-4">
+                        {activeChat.messages
+                          .filter(m => m.role !== "system")
+                          .map((msg, mIdx) => {
+                            if (msg.role === "user") {
+                              return (
+                                <div key={mIdx} className="flex justify-end">
+                                  <div className="bubble-user rounded-xl px-4 py-3 max-w-[85%] text-xs font-mono shadow-sm">
+                                    <div className="text-[9px] opacity-60 mb-0.5 text-right font-sans text-stone-400">
+                                      {language === "kn" ? "ಪ್ರಶ್ನೆ" : "QUERY"} · {msg.timestamp || ""}
+                                    </div>
+                                    <div className="leading-relaxed whitespace-pre-wrap">{msg.content}</div>
+                                  </div>
+                                </div>
+                              );
+                            } else {
+                              const localCasesList = getCasesFromMessage(msg, "");
+                              return (
+                                <div key={mIdx} className={`p-4 rounded-xl border space-y-4 shadow-sm ${
+                                  theme === "dark" ? "bg-[#0c1c30] border-slate-800" : "bg-slate-50 border-slate-200"
+                                }`}>
+                                  <div className="flex items-center justify-between border-b border-slate-700 border-opacity-25 pb-2">
+                                    <RouteBadge route={msg.route} />
+                                    <div className="flex items-center gap-2">
+                                      <button
+                                        type="button"
+                                        onClick={() => handleSpeak(msg.content, language)}
+                                        className="p-1 rounded hover:bg-slate-800 text-slate-400 hover:text-stone-100 transition-all"
+                                        title="Read summary aloud"
+                                      >
+                                        {isSpeaking ? (
+                                          <svg className="w-3.5 h-3.5 text-amber-500 animate-pulse" fill="currentColor" viewBox="0 0 20 20">
+                                            <path fillRule="evenodd" d="M18 10a8 8 0 11-16 0 8 8 0 0116 0zM8 7a1 1 0 00-1 1v4a1 1 0 002 0V8a1 1 0 00-1-1zm4 0a1 1 0 00-1 1v4a1 1 0 002 0V8a1 1 0 00-1-1z" clipRule="evenodd"/>
+                                          </svg>
+                                        ) : (
+                                          <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" strokeWidth="2.5" viewBox="0 0 24 24">
+                                            <path d="M15.536 8.464a5 5 0 010 7.072M18.364 5.636a9 9 0 010 12.728M12 18.75V5.25L7.75 9.5H4.5v5h3.25L12 18.75z" strokeLinecap="round" strokeLinejoin="round"/>
+                                          </svg>
+                                        )}
+                                      </button>
+                                      <span className="text-[9px] text-slate-400 font-mono">{msg.timestamp || ""}</span>
+                                    </div>
+                                  </div>
+
+                                  {msg.isFallback && (
+                                    <div className="bg-amber-500 bg-opacity-15 text-amber-400 text-[10px] uppercase font-mono font-bold px-2.5 py-1.5 border border-amber-500 border-opacity-40 rounded flex items-center gap-1.5 animate-pulse">
+                                      <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" className="shrink-0">
+                                        <path d="M10.29 3.86L1.82 18a2 2 0 001.71 3h16.94a2 2 0 001.71-3L13.71 3.86a2 2 0 00-3.42 0z"/>
+                                        <line x1="12" y1="9" x2="12" y2="13"/>
+                                        <line x1="12" y1="17" x2="12.01" y2="17"/>
+                                      </svg>
+                                      <span>{language === "kn" ? "ಡೆಮೊ ಡೇಟಾ — ಕೋಟಾ ತಲುಪಿದೆ" : "DEMO DATA — Gemini quota reached"}</span>
+                                    </div>
+                                  )}
+
+                                  <div className={`leading-relaxed text-xs ${theme === "dark" ? "text-stone-300" : "text-slate-700"}`}>
+                                    {formatMessage(msg.content)}
+                                  </div>
+
+                                  {msg.sql_results && (
+                                    <SqlResultsTable results={msg.sql_results} />
+                                  )}
+
+                                  {localCasesList.length > 0 && (
+                                    <div className="border-t border-slate-800 border-opacity-35 pt-3 mt-3">
+                                      <span className="text-[10px] uppercase tracking-wider text-[#C6963C] font-mono block mb-1">
+                                        Evidence (Citations)
+                                      </span>
+                                      <div className="space-y-1.5">
+                                        {localCasesList.map((c, i) => (
+                                          <div key={i} className="flex items-center gap-1.5 text-[10px] text-slate-400 font-mono">
+                                            <svg className="w-3.5 h-3.5 opacity-65" fill="none" stroke="currentColor" strokeWidth="2" viewBox="0 0 24 24">
+                                              <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z" />
+                                              <polyline points="14 2 14 8 20 8" />
+                                            </svg>
+                                            <span>{c.id} ({c.crime})</span>
+                                          </div>
+                                        ))}
+                                      </div>
+                                    </div>
+                                  )}
+
+                                  {msg.route && msg.route !== "system" && (
+                                    <ReasoningBlock
+                                      msg={msg}
+                                      theme={theme}
+                                      isRawSqlPermitted={role === "analyst" || role === "supervisor"}
+                                    />
+                                  )}
+                                </div>
+                              );
+                            }
                           })}
-                        </div>
                       </div>
 
-                      {/* Suspects in Selected Case Block */}
-                      <div className={`p-4 rounded-xl border flex-1 flex flex-col min-h-[200px] max-h-[300px] ${theme === "dark" ? "bg-[#0b1628] border-[#1e3a5f]" : "bg-white border-[#dde1e4] text-slate-800"}`}>
-                        <span className="text-xs uppercase tracking-wider text-[#C6963C] font-semibold mb-2.5 font-mono">
-                          {language === "kn" ? "ಆಯ್ದ ಪ್ರಕರಣದಲ್ಲಿನ ಶಂಕಿತರು" : "Suspects in selected case"}
-                        </span>
-                        <div className="flex-1 overflow-y-auto space-y-2 pr-1">
-                          {suspectsList.map((s, idx) => {
-                            const isHigh = s.risk.toLowerCase().includes("high");
-                            const isMed = s.risk.toLowerCase().includes("medium");
-                            const pillColor = isHigh
-                              ? "bg-red-950 text-red-400 border-red-800"
-                              : isMed
-                                ? "bg-amber-950 text-amber-400 border-amber-800"
-                                : "bg-slate-800 text-slate-300 border-slate-600";
-                            return (
-                              <div
-                                key={idx}
-                                onClick={() => setSelectedSuspect(s.name)}
-                                className={`p-3 rounded-lg flex items-center justify-between border cursor-pointer ${
-                                  theme === "dark" ? "bg-[#081628] border-slate-700 text-stone-200" : "bg-slate-50 border-slate-200 text-slate-700"
-                                }`}
-                              >
-                                <span className="font-semibold font-mono text-xs">{s.name}</span>
-                                <span className={`text-[8.5px] uppercase tracking-wider font-mono px-2 py-0.5 border rounded-full ${pillColor}`}>
-                                  {s.risk}
-                                </span>
-                              </div>
-                            );
-                          })}
-                        </div>
-                      </div>
-                    </div>
-
-                    {/* Column 2: Criminal Network Visualization Canvas */}
-                    <div className={`flex-1 lg:w-1/3 flex flex-col p-4 rounded-xl border min-h-[400px] ${theme === "dark" ? "bg-[#0b1628] border-[#1e3a5f]" : "bg-white border-[#dde1e4] text-slate-800"}`}>
-                      <span className="text-xs uppercase tracking-wider text-[#C6963C] font-semibold mb-2 font-mono">
-                        {language === "kn" ? "ಅಪರಾಧ ಜಾಲ" : "Criminal network"}
-                      </span>
-                      
-                      <div className="flex-1 flex flex-col justify-center items-center relative w-full overflow-hidden">
-                        {lastAssistantMsg && lastAssistantMsg.graphData ? (
-                          <NetworkGraph
-                            data={lastAssistantMsg.graphData}
-                            theme={theme}
-                            onNodeClick={(nodeId) => {
-                              if (nodeId.startsWith("CASE_") || nodeId.includes("-2026-")) {
-                                handleSend(`Show repeat offenders linked to Case ${nodeId}`);
-                              } else {
-                                handleSend(`show history and risk analysis for suspect ${nodeId}`);
-                              }
-                            }}
-                          />
-                        ) : lastAssistantMsg && lastAssistantMsg.forecastData ? (
-                          <ForecastChart data={lastAssistantMsg.forecastData} theme={theme} />
-                        ) : (
-                          <div className="text-slate-400 text-xs italic">No visual graph metadata computed for this query pipeline.</div>
-                        )}
-                      </div>
-
-                      <button
-                        onClick={() => {
-                          if (activeCaseId) {
-                            handleSend(`who are the repeat offenders linked to Case ${activeCaseId} and list their associates`);
-                          }
-                        }}
-                        className="w-full mt-4 flex items-center justify-center gap-2 border border-slate-500 border-opacity-40 hover:bg-slate-500 hover:bg-opacity-10 py-2.5 px-4 rounded text-xs transition-all font-semibold font-mono text-[#C6963C]"
-                      >
-                        <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" strokeWidth="2" viewBox="0 0 24 24">
-                          <path d="M18 8A3 3 0 1018 2A3 3 0 0018 8zM6 15A3 3 0 106 9A3 3 0 006 15zM18 22A3 3 0 1018 16A3 3 0 0018 22z" strokeLinecap="round" strokeLinejoin="round" />
-                          <path d="M9 13l6-3M9 14.5l6 4.5" />
-                        </svg>
-                        {language === "kn" ? "ಸಹಚರರನ್ನು ವಿಸ್ತರಿಸಿ" : "Expand associates"}
-                      </button>
-                    </div>
-
-                    {/* Column 3: Live Investigation Report Card */}
-                    <div className={`flex-1 lg:w-1/3 flex flex-col p-4 rounded-xl border min-h-[400px] ${theme === "dark" ? "bg-[#0b1628] border-[#1e3a5f]" : "bg-white border-[#dde1e4] text-slate-800"}`}>
-                      <span className="text-xs uppercase tracking-wider text-[#C6963C] font-semibold mb-2.5 font-mono">
-                        {language === "kn" ? "ತನಿಖಾ ವರದಿ" : "Investigation report"}
-                      </span>
-                      
-                      <div className={`flex-1 overflow-y-auto p-4 rounded-lg flex flex-col justify-between max-h-[420px] ${
-                        theme === "dark" ? "bg-[#081628] border border-slate-800" : "bg-slate-50 border border-slate-200"
+                      {/* Composer input box inside split chat feed */}
+                      <div className={`p-3 border-t shrink-0 flex items-center gap-2 ${
+                        theme === "dark" ? "bg-[#07111e] border-[#1e3a5f]" : "bg-slate-50 border-slate-200"
                       }`}>
-                        {lastAssistantMsg && (
-                          <div className="space-y-4 w-full">
-                            <RouteBadge route={lastAssistantMsg.route} />
-                            
-                            <div className="text-stone-300 leading-relaxed text-xs">
-                              {formatMessage(lastAssistantMsg.content)}
-                            </div>
+                        <button
+                          type="button"
+                          onClick={toggleMic}
+                          disabled={!speechSupported}
+                          className={`p-2 rounded-full border transition-all ${isListening
+                              ? "bg-red-100 border-red-500 text-red-600 animate-pulse"
+                              : "bg-slate-800 border-slate-700 text-slate-400 hover:bg-slate-700"
+                            }`}
+                          title="Voice input"
+                        >
+                          <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                            <path d="M12 1v11M19 10v2a7 7 0 0 1-14 0v-2M12 23v-4" strokeLinecap="round" />
+                            <rect x="9" y="5" width="6" height="10" rx="3" fill={isListening ? "currentColor" : "none"} />
+                          </svg>
+                        </button>
+                        <input
+                          type="text"
+                          placeholder={language === "kn" ? "ಇಲ್ಲಿ ಪ್ರಶ್ನೆಯನ್ನು ಕೇಳಿ..." : "Query database..."}
+                          value={inputVal}
+                          onChange={(e) => setInputVal(e.target.value)}
+                          onKeyDown={handleKeyDown}
+                          disabled={loading}
+                          className={`flex-1 rounded-md px-3 py-2 text-xs focus:outline-none border ${theme === "dark"
+                              ? "bg-[#0b1f3a] border-[#1e3a5f] focus:border-[#C6963C] text-stone-200"
+                              : "bg-white border-slate-300 focus:border-stone-500 text-slate-800"
+                            }`}
+                        />
+                        <button
+                          onClick={() => handleSend()}
+                          disabled={loading || !inputVal.trim()}
+                          className="px-4 py-2 rounded brass-btn font-semibold text-xs disabled:opacity-50"
+                        >
+                          {language === "kn" ? "ಕಳುಹಿಸಿ" : "Send"}
+                        </button>
+                      </div>
+                    </div>
 
-                            {/* Rendered HTML results tables inside report box if it exists */}
-                            {lastAssistantMsg.sql_results && (
-                              <SqlResultsTable results={lastAssistantMsg.sql_results} />
+                    {/* RIGHT PANEL: Analytics Dashboard Tabs Workbench (60% width) */}
+                    <div className={`flex-1 flex flex-col border rounded-xl overflow-hidden shadow-md h-full ${
+                      theme === "dark" ? "bg-[#0b1628] border-[#1e3a5f]" : "bg-white border-slate-200"
+                    }`}>
+                      {/* Tabs selector header bar */}
+                      <div className={`flex items-center gap-1.5 px-4 border-b shrink-0 ${
+                        theme === "dark" ? "bg-[#081220] border-[#1e3a5f]" : "bg-slate-50 border-slate-200"
+                      }`}>
+                        {[
+                          { id: "network", label: "Network Map", icon: "🌐" },
+                          { id: "forecast", label: "Caseload Forecast", icon: "📈" },
+                          { id: "demographics", label: "Demographics", icon: "📊" },
+                          { id: "registry", label: "Case Registry", icon: "📂" }
+                        ].map((t) => {
+                          const isActive = workbenchTab === t.id;
+                          return (
+                            <button
+                              key={t.id}
+                              onClick={() => setWorkbenchTab(t.id)}
+                              className={`py-3 px-3 text-[10.5px] font-mono font-semibold transition-all border-b-2 flex items-center gap-1.5 focus:outline-none ${
+                                isActive
+                                  ? "border-[#C6963C] text-[#C6963C] bg-black bg-opacity-20"
+                                  : "border-transparent text-slate-400 hover:text-stone-200 hover:bg-white hover:bg-opacity-5"
+                              }`}
+                            >
+                              <span>{t.icon}</span>
+                              <span>{t.label}</span>
+                            </button>
+                          );
+                        })}
+                      </div>
+
+                      {/* Tab content area */}
+                      <div className="flex-1 overflow-y-auto p-4 space-y-4">
+                        
+                        {/* 1. NETWORK GRAPH TAB */}
+                        {workbenchTab === "network" && (
+                          <div className="space-y-4 h-full flex flex-col justify-between">
+                            {lastAssistantMsg && lastAssistantMsg.graphData ? (
+                              <NetworkGraph
+                                data={lastAssistantMsg.graphData}
+                                theme={theme}
+                                onNodeClick={(nodeId) => {
+                                  if (nodeId.startsWith("CASE_") || nodeId.includes("-2026-")) {
+                                    handleSend(`Show repeat offenders linked to Case ${nodeId}`);
+                                  } else {
+                                    handleSend(`show history and risk analysis for suspect ${nodeId}`);
+                                  }
+                                }}
+                              />
+                            ) : (
+                              <div className="flex-1 flex flex-col justify-center items-center p-8 text-center border border-dashed border-slate-700 border-opacity-35 rounded-xl min-h-[300px]">
+                                <span className="text-2xl mb-2">🌐</span>
+                                <h4 className="font-mono text-stone-300 text-xs font-semibold">No Network Data Loaded</h4>
+                                <p className="text-[10px] text-slate-400 max-w-sm mt-1 leading-relaxed">
+                                  Submit a co-accused gang ring or suspect relation query (e.g. "Show repeat offenders involved in robbery") to build and inspect the graph.
+                                </p>
+                              </div>
                             )}
 
-                            {/* List Evidence/Citations matching mockup */}
-                            <div className="border-t border-slate-800 border-opacity-35 pt-3 mt-3">
-                              <span className="text-[10px] uppercase tracking-wider text-[#C6963C] font-mono block mb-1">
-                                Evidence (Citations)
-                              </span>
-                              <div className="space-y-1.5">
-                                {casesList.map((c, i) => (
-                                  <div key={i} className="flex items-center gap-1.5 text-[10px] text-slate-400 font-mono">
-                                    <svg className="w-3.5 h-3.5 opacity-65" fill="none" stroke="currentColor" strokeWidth="2" viewBox="0 0 24 24">
-                                      <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z" />
-                                      <polyline points="14 2 14 8 20 8" />
-                                    </svg>
-                                    <span>{c.id} ({c.crime})</span>
-                                  </div>
-                                ))}
-                              </div>
+                            {/* Dynamic Legend */}
+                            <div className={`p-3 rounded-lg border flex flex-wrap gap-x-5 gap-y-2 justify-center text-[9px] font-mono ${
+                              theme === "dark" ? "bg-[#07111e] border-slate-800" : "bg-slate-50 border-slate-200 text-slate-600"
+                            }`}>
+                              <span className="flex items-center gap-1.5"><span className="w-2.5 h-2.5 bg-[#EF4444] rounded-full inline-block"></span> Accused Suspect</span>
+                              <span className="flex items-center gap-1.5"><span className="w-2.5 h-2.5 bg-[#3B82F6] rounded-full inline-block"></span> Case File</span>
+                              <span className="flex items-center gap-1.5"><span className="w-2.5 h-2.5 bg-[#F59E0B] rounded-full inline-block"></span> PS Station / Phone</span>
+                              <span className="flex items-center gap-1.5"><span className="w-2.5 h-2.5 bg-[#10B981] rounded-full inline-block"></span> Suspect Account</span>
+                              <span className="flex items-center gap-1.5"><span className="w-2.5 h-2.5 bg-[#059669] rounded-full inline-block"></span> Wire Transfer Link</span>
                             </div>
+                          </div>
+                        )}
 
-                            {/* Collapsible reasoning block */}
-                            {lastAssistantMsg.route && lastAssistantMsg.route !== "system" && (
-                              <ReasoningBlock
-                                msg={lastAssistantMsg}
-                                theme={theme}
-                                isRawSqlPermitted={role === "analyst" || role === "supervisor"}
-                              />
+                        {/* 2. CASELOAD FORECAST TAB */}
+                        {workbenchTab === "forecast" && (
+                          <div className="space-y-4">
+                            {lastAssistantMsg && lastAssistantMsg.forecastData ? (
+                              <div className="space-y-4">
+                                <ForecastChart data={lastAssistantMsg.forecastData} theme={theme} />
+                                
+                                {/* Projections Stats details grid */}
+                                <div className={`p-4 rounded-xl border space-y-3 ${theme === "dark" ? "bg-[#07111e] border-slate-800" : "bg-slate-50 border-slate-200 text-slate-800"}`}>
+                                  <h4 className="text-[10px] font-bold uppercase tracking-wider text-[#C6963C] font-mono">Calculated Trend projections</h4>
+                                  <div className="grid grid-cols-3 gap-3">
+                                    {lastAssistantMsg.forecastData.forecast.map((f, idx) => (
+                                      <div key={idx} className="bg-black bg-opacity-20 rounded p-2.5 border border-slate-800 font-mono text-center">
+                                        <span className="text-[9px] text-slate-400 block mb-0.5">{f.month}</span>
+                                        <span className="text-[#C6963C] text-sm font-bold">{f.count} cases</span>
+                                      </div>
+                                    ))}
+                                  </div>
+                                  <div className="text-[9.5px] leading-relaxed text-slate-400 font-mono italic pt-2 border-t border-slate-800">
+                                    {lastAssistantMsg.context || "Calculated projection using statistical database frequencies."}
+                                  </div>
+                                </div>
+                              </div>
+                            ) : (
+                              <div className="flex-1 flex flex-col justify-center items-center p-8 text-center border border-dashed border-slate-700 border-opacity-35 rounded-xl min-h-[300px]">
+                                <span className="text-2xl mb-2">📈</span>
+                                <h4 className="font-mono text-stone-300 text-xs font-semibold">No Forecast Data Loaded</h4>
+                                <p className="text-[10px] text-slate-400 max-w-sm mt-1 leading-relaxed">
+                                  Run a monthly forecasting projection query (e.g. "Predict burglary cases in Mysuru next month") to compute regression metrics and display the chart.
+                                </p>
+                              </div>
                             )}
                           </div>
                         )}
+
+                        {/* 3. SOCIO-DEMOGRAPHIC ANALYSIS TAB */}
+                        {workbenchTab === "demographics" && (
+                          <div className="space-y-4 font-mono text-[10px]">
+                            <div className={`p-4 rounded-xl border space-y-4 ${theme === "dark" ? "bg-[#07111e] border-slate-800" : "bg-slate-50 border-slate-200 text-slate-800"}`}>
+                              <div>
+                                <h4 className="text-[10px] font-bold uppercase tracking-wider text-[#C6963C]">Socio-demographic crime insights</h4>
+                                <p className="text-[9px] text-slate-400 mt-0.5 leading-relaxed">Age brackets and risk profiles evaluated from co-accused data indices.</p>
+                              </div>
+
+                              {/* Age Bracket progress bars */}
+                              <div className="space-y-2">
+                                <span className="text-[9px] text-slate-400 uppercase tracking-wide">Age distribution brackets</span>
+                                {Object.entries(demoData.ageBrackets).map(([bracket, count]) => {
+                                  const total = Object.values(demoData.ageBrackets).reduce((a, b) => a + b, 0) || 1;
+                                  const pct = Math.round((count / total) * 100);
+                                  return (
+                                    <div key={bracket} className="space-y-1">
+                                      <div className="flex justify-between text-[9px]">
+                                        <span className="text-stone-300">{bracket} years</span>
+                                        <span className="text-[#C6963C]">{count} suspects ({pct}%)</span>
+                                      </div>
+                                      <div className="w-full bg-slate-800 h-2.5 rounded-full overflow-hidden border border-slate-700">
+                                        <div className="bg-[#C6963C] h-full rounded-full transition-all duration-500" style={{ width: `${pct}%` }}></div>
+                                      </div>
+                                    </div>
+                                  );
+                                })}
+                              </div>
+
+                              {/* Gender and Risk bands */}
+                              <div className="grid grid-cols-2 gap-4 pt-3 border-t border-slate-800 border-opacity-35">
+                                <div className="space-y-2">
+                                  <span className="text-[9px] text-slate-400 uppercase tracking-wide block">Gender Distribution</span>
+                                  {Object.entries(demoData.genderCount).map(([g, c]) => {
+                                    const total = Object.values(demoData.genderCount).reduce((a, b) => a + b, 0) || 1;
+                                    const pct = Math.round((c / total) * 100);
+                                    return (
+                                      <div key={g} className="flex justify-between py-1 border-b border-slate-800 border-opacity-25 text-[9.5px]">
+                                        <span className="text-slate-400">{g}:</span>
+                                        <span className="text-stone-300 font-bold">{c} ({pct}%)</span>
+                                      </div>
+                                    );
+                                  })}
+                                </div>
+                                <div className="space-y-2">
+                                  <span className="text-[9px] text-slate-400 uppercase tracking-wide block">Jurisdiction Risk Ratings</span>
+                                  {Object.entries(demoData.riskLevels).map(([r, c]) => (
+                                    <div key={r} className="flex justify-between py-1 border-b border-slate-800 border-opacity-25 text-[9.5px]">
+                                      <span className={r === "High" ? "text-red-400" : r === "Medium" ? "text-amber-400" : "text-green-400"}>{r} Risk:</span>
+                                      <span className="text-stone-300 font-bold">{c} suspects</span>
+                                    </div>
+                                  ))}
+                                </div>
+                              </div>
+                            </div>
+
+                            {/* Sociological Risk Indicators */}
+                            <div className={`p-4 rounded-xl border space-y-3 ${theme === "dark" ? "bg-[#07111e] border-slate-800" : "bg-slate-50 border-slate-200 text-slate-800"}`}>
+                              <h4 className="text-[10px] font-bold uppercase tracking-wider text-[#C6963C]">District Sociological Risk Matrix</h4>
+                              <div className="grid grid-cols-2 gap-3 text-[9px] text-slate-400">
+                                <div className="p-2.5 rounded bg-black bg-opacity-20 border border-slate-800">
+                                  <span className="text-[#C6963C] block font-bold mb-0.5">Urbanisation Density</span>
+                                  <span>High correlation with Mysuru City industrial zones.</span>
+                                </div>
+                                <div className="p-2.5 rounded bg-black bg-opacity-20 border border-slate-800">
+                                  <span className="text-[#C6963C] block font-bold mb-0.5">Migration Caseload</span>
+                                  <span>Moderate link in seasonal laborer registration lists.</span>
+                                </div>
+                                <div className="p-2.5 rounded bg-black bg-opacity-20 border border-slate-800">
+                                  <span className="text-[#C6963C] block font-bold mb-0.5">Economic Stress</span>
+                                  <span>Increased cases during post-harvest economic stress cycles.</span>
+                                </div>
+                                <div className="p-2.5 rounded bg-black bg-opacity-20 border border-slate-800">
+                                  <span className="text-[#C6963C] block font-bold mb-0.5">Education Factor</span>
+                                  <span>Majority offences map to high drop-out demographics.</span>
+                                </div>
+                              </div>
+                            </div>
+                          </div>
+                        )}
+
+                        {/* 4. CASE REGISTRY EVIDENCE TAB */}
+                        {workbenchTab === "registry" && (
+                          <div className="grid grid-cols-1 md:grid-cols-2 gap-4 h-full">
+                            
+                            {/* Matching Cases List */}
+                            <div className={`p-4 rounded-xl border flex flex-col h-[340px] ${theme === "dark" ? "bg-[#07111e] border-slate-800" : "bg-slate-50 border-slate-200 text-slate-800"}`}>
+                              <span className="text-xs uppercase tracking-wider text-[#C6963C] font-semibold mb-2.5 font-mono">
+                                {language === "kn" ? "ಹೊಂದಾಣಿಕೆಯಾಗುವ ಪ್ರಕರಣಗಳು" : "Matching Cases"} ({casesList.length})
+                              </span>
+                              <div className="flex-1 overflow-y-auto space-y-2 pr-1">
+                                {casesList.length > 0 ? (
+                                  casesList.map((c) => {
+                                    const isSel = c.id === activeCaseId;
+                                    return (
+                                      <div
+                                        key={c.id}
+                                        onClick={() => setSelectedCaseId(c.id)}
+                                        className={`p-3 rounded-lg border cursor-pointer transition-all ${
+                                          isSel
+                                            ? "bg-[#0f2745] border-[#C6963C] text-stone-100 shadow-sm"
+                                            : theme === "dark"
+                                              ? "bg-[#081628] border-slate-800 hover:border-slate-500 text-stone-300"
+                                              : "bg-white border-slate-200 hover:border-[#C6963C] text-slate-700"
+                                        }`}
+                                      >
+                                        <div className="font-semibold font-mono text-xs text-[#C6963C]">{c.id}</div>
+                                        <div className="text-[10px] text-slate-400 mt-1">{c.crime} · {c.district}</div>
+                                      </div>
+                                    );
+                                  })
+                                ) : (
+                                  <div className="text-slate-400 text-xs italic p-4 text-center mt-4 border border-dashed border-slate-800 border-opacity-35 rounded">
+                                    {language === "kn" ? "ಯಾವುದೇ ಸಂಬಂಧಿತ ಪ್ರಕರಣಗಳಿಲ್ಲ." : "No linked case files found."}
+                                  </div>
+                                )}
+                              </div>
+                            </div>
+
+                            {/* Suspects list */}
+                            <div className={`p-4 rounded-xl border flex flex-col h-[340px] ${theme === "dark" ? "bg-[#07111e] border-slate-800" : "bg-slate-50 border-slate-200 text-slate-800"}`}>
+                              <span className="text-xs uppercase tracking-wider text-[#C6963C] font-semibold mb-2.5 font-mono">
+                                {language === "kn" ? "ಆಯ್ದ ಪ್ರಕರಣದಲ್ಲಿನ ಶಂಕಿತರು" : "Suspects in Selected Case"}
+                              </span>
+                              <div className="flex-1 overflow-y-auto space-y-2 pr-1">
+                                {suspectsList.length > 0 ? (
+                                  suspectsList.map((s, idx) => {
+                                    const isHigh = s.risk.toLowerCase().includes("high");
+                                    const isMed = s.risk.toLowerCase().includes("medium");
+                                    const pillColor = isHigh
+                                      ? "bg-red-950 text-red-400 border-red-800"
+                                      : isMed
+                                        ? "bg-amber-950 text-amber-400 border-amber-800"
+                                        : "bg-slate-800 text-slate-300 border-slate-600";
+                                    return (
+                                      <div
+                                        key={idx}
+                                        onClick={() => setSelectedSuspect(s.name)}
+                                        className={`p-3 rounded-lg flex items-center justify-between border cursor-pointer ${
+                                          theme === "dark" ? "bg-[#081628] border-slate-700 text-stone-200" : "bg-white border-slate-200 text-slate-700"
+                                        }`}
+                                      >
+                                        <span className="font-semibold font-mono text-xs">{s.name}</span>
+                                        <span className={`text-[8.5px] uppercase tracking-wider font-mono px-2 py-0.5 border rounded-full ${pillColor}`}>
+                                          {s.risk}
+                                        </span>
+                                      </div>
+                                    );
+                                  })
+                                ) : (
+                                  <div className="text-slate-400 text-xs italic p-4 text-center mt-4 border border-dashed border-slate-800 border-opacity-35 rounded">
+                                    {language === "kn" ? "ಯಾವುದೇ ಸಕ್ರಿಯ ಶಂಕಿತರಿಲ್ಲ." : "No active suspect profiles."}
+                                  </div>
+                                )}
+                              </div>
+                            </div>
+                          </div>
+                        )}
                       </div>
-
-                      <button
-                        onClick={handleExportPDF}
-                        className="w-full mt-4 brass-btn font-semibold py-2.5 px-4 rounded text-xs transition-all font-mono"
-                      >
-                        {language === "kn" ? "ವರದಿಯನ್ನು ರಫ್ತು ಮಾಡಿ" : "Export report"}
-                      </button>
                     </div>
-
                   </div>
                 );
               })()}
@@ -1136,57 +1567,60 @@ export default function App() {
           </main>
 
           {/* COMPOSER INPUT CONTAINER */}
-          <footer
-            className="shrink-0 p-4 border-t"
-            style={{
-              backgroundColor: theme === "dark" ? "#0b1b2f" : "#FFFFFF",
-              borderColor: theme === "dark" ? "#1e3a5f" : "#dde1e4"
-            }}
-          >
-            <div className="max-w-3xl mx-auto flex items-center gap-3">
-              <button
-                type="button"
-                onClick={toggleMic}
-                disabled={!speechSupported}
-                className={`p-3 rounded-full border transition-all ${isListening
-                    ? "bg-red-100 border-red-500 text-red-600 animate-pulse"
-                    : "bg-slate-50 border-slate-300 text-slate-600 hover:bg-slate-100"
-                  }`}
-                title={speechSupported ? (isListening ? "Listening... click to stop" : "Voice input") : "Mic not supported"}
-                style={{ opacity: speechSupported ? 1 : 0.5 }}
-              >
-                <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-                  <path d="M12 1v11M19 10v2a7 7 0 0 1-14 0v-2M12 23v-4" strokeLinecap="round" />
-                  <rect x="9" y="5" width="6" height="10" rx="3" fill={isListening ? "currentColor" : "none"} />
-                </svg>
-              </button>
+          {activeChat.messages.length <= 1 && (
+            <footer
+              className="shrink-0 p-4 border-t"
+              style={{
+                backgroundColor: theme === "dark" ? "#0b1b2f" : "#FFFFFF",
+                borderColor: theme === "dark" ? "#1e3a5f" : "#dde1e4"
+              }}
+            >
+              <div className="max-w-3xl mx-auto flex items-center gap-3">
+                <button
+                  type="button"
+                  onClick={toggleMic}
+                  disabled={!speechSupported}
+                  className={`p-3 rounded-full border transition-all ${isListening
+                      ? "bg-red-100 border-red-500 text-red-600 animate-pulse"
+                      : "bg-slate-50 border-slate-300 text-slate-600 hover:bg-slate-100"
+                    }`}
+                  title={speechSupported ? (isListening ? "Listening... click to stop" : "Voice input") : "Mic not supported"}
+                  style={{ opacity: speechSupported ? 1 : 0.5 }}
+                >
+                  <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                    <path d="M12 1v11M19 10v2a7 7 0 0 1-14 0v-2M12 23v-4" strokeLinecap="round" />
+                    <rect x="9" y="5" width="6" height="10" rx="3" fill={isListening ? "currentColor" : "none"} />
+                  </svg>
+                </button>
 
-              <input
-                type="text"
-                placeholder={
-                  language === "kn"
-                    ? "ಇಲ್ಲಿ ಅಪರಾಧ ಪ್ರಶ್ನೆಯನ್ನು ಟೈಪ್ ಮಾಡಿ... (ಕಳುಹಿಸಲು Enter ಒತ್ತಿ)"
-                    : "Type your query here... (Press Enter to send)"
-                }
-                value={inputVal}
-                onChange={(e) => setInputVal(e.target.value)}
-                onKeyDown={handleKeyDown}
-                disabled={loading}
-                className={`flex-1 rounded-md px-4 py-3 text-sm focus:outline-none border ${theme === "dark"
-                    ? "bg-[#0f2745] border-[#1e3a5f] focus:border-[#C6963C] text-stone-200 focus:bg-[#0b1f3a]"
-                    : "bg-slate-50 border-slate-300 focus:border-stone-500 text-slate-800 focus:bg-white"
-                  }`}
-              />
+                <input
+                  type="text"
+                  placeholder={
+                    language === "kn"
+                      ? "ಇಲ್ಲಿ ಅಪರಾಧ ಪ್ರಶ್ನೆಯನ್ನು ಟೈಪ್ ಮಾಡಿ... (ಕಳುಹಿಸಲು Enter ಒತ್ತಿ)"
+                      : "Type your query here... (Press Enter to send)"
+                  }
+                  value={inputVal}
+                  onChange={(e) => setInputVal(e.target.value)}
+                  onKeyDown={handleKeyDown}
+                  disabled={loading}
+                  className={`flex-1 rounded-md px-4 py-3 text-sm focus:outline-none border ${theme === "dark"
+                      ? "bg-[#0f2745] border-[#1e3a5f] focus:border-[#C6963C] text-stone-200 focus:bg-[#0b1f3a]"
+                      : "bg-slate-50 border-slate-300 focus:border-stone-500 text-slate-800 focus:bg-white"
+                    }`}
+                />
 
-              <button
-                onClick={() => handleSend()}
-                disabled={loading || !inputVal.trim()}
-                className="brass-btn font-semibold px-5 py-3 rounded-md text-sm cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed"
-              >
-                {language === "kn" ? "ಕಳುಹಿಸಿ" : "Send"}
-              </button>
-            </div>
-          </footer>
+                <button
+                  onClick={() => handleSend()}
+                  disabled={loading || !inputVal.trim()}
+                  className="brass-btn font-semibold px-5 py-3 rounded-md text-sm cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed"
+                >
+                  {language === "kn" ? "ಕಳುಹಿಸಿ" : "Send"}
+                </button>
+              </div>
+            </footer>
+          )}
+
         </div>
       </div>
 
@@ -1350,7 +1784,14 @@ function formatMessage(text) {
 // TABULAR SQL RESULTS COMPONENT (Fix 5.3)
 // ---------------------------------------------------------------------------
 function SqlResultsTable({ results }) {
-  if (!Array.isArray(results) || results.length === 0) return null;
+  if (!Array.isArray(results)) return null;
+  if (results.length === 0) {
+    return (
+      <div className="mt-3 p-3 text-xs italic text-slate-400 bg-[#081628] bg-opacity-65 border border-dashed border-slate-700 rounded text-center">
+        No matching records found for this query.
+      </div>
+    );
+  }
 
   const maxRows = 10;
   const displayRows = results.slice(0, maxRows);
@@ -1494,6 +1935,7 @@ function NetworkGraph({ data, theme, onNodeClick }) {
   const fgRef = useRef();
 
   const [hoverNode, setHoverNode] = useState(null);
+  const [selectedNode, setSelectedNode] = useState(null);
   const [highlightNodes, setHighlightNodes] = useState(new Set());
   const [highlightLinks, setHighlightLinks] = useState(new Set());
 
@@ -1536,88 +1978,211 @@ function NetworkGraph({ data, theme, onNodeClick }) {
   };
 
   return (
-    <div className={`w-full h-[280px] rounded-lg border relative overflow-hidden select-none ${
-      theme === "dark" ? "bg-[#0b1628] border-[#1e3a5f]" : "bg-slate-50 border-slate-200"
+    <div className={`w-full h-[380px] rounded-lg border flex overflow-hidden select-none shadow-inner ${
+      theme === "dark" ? "bg-[#091324] border-[#1e3a5f]" : "bg-slate-50 border-slate-200"
     }`}>
-      <div className="absolute top-2 left-2 z-10 text-[8px] font-mono text-slate-400 bg-[#081628] bg-opacity-75 px-2 py-0.5 rounded border border-slate-800 pointer-events-none">
-        Drag nodes · Scroll zoom
+      {/* Graph Visualizer area */}
+      <div className="flex-1 relative h-full bg-[#040c18] bg-opacity-40">
+        <div className="absolute top-2 left-2 z-10 text-[8px] font-mono text-slate-400 bg-[#081628] bg-opacity-75 px-2 py-0.5 rounded border border-slate-800 pointer-events-none">
+          Click node to inspect · Drag to reposition · Scroll zoom
+        </div>
+
+        <ForceGraph2D
+          ref={fgRef}
+          graphData={graphData}
+          width={400}
+          height={378}
+          cooldownTicks={120}
+          onNodeClick={(node) => {
+            setSelectedNode(node);
+          }}
+          onNodeHover={handleNodeHover}
+          nodeRelSize={6}
+          nodeCanvasObject={(node, ctx, globalScale) => {
+            const label = node.label || node.id;
+            const fontSize = Math.max(7.5, 9 / globalScale);
+            ctx.font = `${fontSize}px monospace`;
+
+            const isHovered = hoverNode && hoverNode.id === node.id;
+            const isSelected = selectedNode && selectedNode.id === node.id;
+            const isHighlighted = highlightNodes.size > 0 && highlightNodes.has(node.id);
+            const isFade = highlightNodes.size > 0 && !isHighlighted;
+
+            ctx.save();
+            ctx.globalAlpha = isFade ? 0.20 : 1.0;
+
+            // Render custom node shapes
+            let r = 5.5;
+            let color = "#EF4444"; // Suspect node (Red)
+            if (node.type === "case") {
+              color = "#3B82F6"; // Case Node (Blue)
+              r = 7.0;
+            } else if (node.type === "phone" || node.type === "station") {
+              color = "#F59E0B"; // Communication Asset (Gold/Amber)
+              r = 4.5;
+            } else if (node.type === "financial") {
+              color = "#10B981"; // Bank Account Node (Green)
+              r = 5.0;
+            } else if (node.type === "transaction") {
+              color = "#059669"; // Money Wire Node (Emerald Green)
+              r = 4.5;
+            }
+
+            // Draw shadow for node depth
+            ctx.shadowColor = color;
+            ctx.shadowBlur = (isHovered || isSelected) ? 10 : 3;
+
+            ctx.beginPath();
+            ctx.arc(node.x, node.y, r, 0, 2 * Math.PI, false);
+            ctx.fillStyle = color;
+            ctx.fill();
+
+            // Reset shadow to draw outline and text cleanly
+            ctx.shadowBlur = 0;
+            ctx.lineWidth = (isHovered || isSelected) ? 2.5 / globalScale : 1.2 / globalScale;
+            ctx.strokeStyle = (isHovered || isSelected) ? "#FFFFFF" : (theme === "dark" ? "#1E293B" : "#E2E8F0");
+            ctx.stroke();
+
+            // Render details inside accused nodes (avatar) or emoji glyphs inside bank/wire nodes
+            if (node.type === "accused") {
+              ctx.fillStyle = "#FFFFFF";
+              ctx.beginPath();
+              ctx.arc(node.x, node.y - 1.2, 1.4, 0, 2 * Math.PI, false);
+              ctx.fill();
+              ctx.beginPath();
+              ctx.arc(node.x, node.y + 2.5, 2.5, Math.PI, 2 * Math.PI, false);
+              ctx.fill();
+            } else if (node.type === "financial") {
+              ctx.fillStyle = "#FFFFFF";
+              ctx.font = `bold ${5.5 / globalScale}px sans-serif`;
+              ctx.textAlign = 'center';
+              ctx.textBaseline = 'middle';
+              ctx.fillText("🏦", node.x, node.y);
+            } else if (node.type === "transaction") {
+              ctx.fillStyle = "#FFFFFF";
+              ctx.font = `bold ${5.5 / globalScale}px sans-serif`;
+              ctx.textAlign = 'center';
+              ctx.textBaseline = 'middle';
+              ctx.fillText("💸", node.x, node.y);
+            } else if (node.type === "phone" && label.toLowerCase().includes("station")) {
+              ctx.fillStyle = "#FFFFFF";
+              ctx.font = `bold ${5.5 / globalScale}px sans-serif`;
+              ctx.textAlign = 'center';
+              ctx.textBaseline = 'middle';
+              ctx.fillText("👮", node.x, node.y);
+            }
+
+            // Node Text Labels drawn above shapes
+            ctx.textAlign = 'center';
+            ctx.textBaseline = 'middle';
+            ctx.fillStyle = theme === "dark" ? "#E2E8F0" : "#0F172A";
+
+            const displayLabel = label.length > 18 ? label.slice(0, 15) + "..." : label;
+            ctx.fillText(displayLabel, node.x, node.y - r - (fontSize / 2) - 2);
+
+            ctx.restore();
+          }}
+          linkColor={link => {
+            const isHighlighted = highlightLinks.has(link);
+            const isFade = highlightLinks.size > 0 && !isHighlighted;
+            if (isFade) return theme === "dark" ? "#1e293b10" : "#cbd5e110";
+            
+            if (link.type === "TRANSFER_TO" || link.type === "SENT_FUNDS") {
+              return "#10B981"; // Green for money trails
+            }
+            if (link.type === "HAS_ACCOUNT") {
+              return "#34D399"; // Teal/Green for ownership
+            }
+            if (link.type === "USES" || link.type === "REPORTED_AT") {
+              return "#F59E0B"; // Amber for phone logs
+            }
+            return "#EF4444"; // Red for co-accused / accused links
+          }}
+          linkWidth={link => (highlightLinks.has(link) ? 2.5 : 1.0)}
+          linkDirectionalParticles={link => (link.type === "TRANSFER_TO" || link.type === "SENT_FUNDS" ? 3 : 1)}
+          linkDirectionalParticleWidth={link => {
+            const isTr = link.type === "TRANSFER_TO" || link.type === "SENT_FUNDS";
+            return isTr ? 2.0 : (highlightLinks.has(link) ? 1.5 : 0);
+          }}
+          linkDirectionalParticleSpeed={link => {
+            return link.type === "TRANSFER_TO" || link.type === "SENT_FUNDS" ? 0.012 : 0.005;
+          }}
+        />
       </div>
 
-      <ForceGraph2D
-        ref={fgRef}
-        graphData={graphData}
-        width={340}
-        height={278}
-        cooldownTicks={80}
-        onNodeClick={(node) => {
-          if (onNodeClick) onNodeClick(node.id);
-        }}
-        onNodeHover={handleNodeHover}
-        nodeRelSize={6}
-        nodeCanvasObject={(node, ctx, globalScale) => {
-          const label = node.label || node.id;
-          const fontSize = Math.max(7.5, 9 / globalScale);
-          ctx.font = `${fontSize}px monospace`;
+      {/* Dynamic Sidebar Node Inspector */}
+      <div className={`w-64 border-l p-4 flex flex-col justify-between text-xs font-sans ${
+        theme === "dark" ? "bg-[#07111e] border-[#1e3a5f] text-stone-200" : "bg-white border-slate-200 text-slate-700"
+      }`}>
+        {selectedNode ? (
+          <div className="space-y-4 flex-1 flex flex-col">
+            <div className="border-b border-slate-700 border-opacity-35 pb-2.5">
+              <span className={`text-[8.5px] font-mono font-bold uppercase tracking-wider px-2 py-0.5 border rounded-full ${
+                selectedNode.type === "accused" ? "bg-red-950 text-red-400 border-red-800" :
+                selectedNode.type === "case" ? "bg-blue-950 text-blue-400 border-blue-800" :
+                selectedNode.type === "financial" ? "bg-emerald-950 text-emerald-400 border-emerald-800" :
+                selectedNode.type === "transaction" ? "bg-teal-950 text-teal-400 border-teal-800" :
+                "bg-amber-950 text-amber-400 border-amber-800"
+              }`}>
+                {selectedNode.type}
+              </span>
+              <h3 className="font-semibold text-stone-100 font-mono text-xs mt-2 truncate" title={selectedNode.label || selectedNode.id}>
+                {selectedNode.label || selectedNode.id}
+              </h3>
+            </div>
 
-          const isHovered = hoverNode && hoverNode.id === node.id;
-          const isHighlighted = highlightNodes.size > 0 && highlightNodes.has(node.id);
-          const isFade = highlightNodes.size > 0 && !isHighlighted;
+            <div className="space-y-2.5 flex-1 overflow-y-auto pr-1">
+              <div className="font-mono text-[10px] text-slate-400 uppercase tracking-wide">Entity Profiles</div>
+              {selectedNode.details ? (
+                <div className="space-y-2">
+                  {selectedNode.details.split(" · ").map((detail, idx) => {
+                    const [key, val] = detail.split(": ");
+                    return (
+                      <div key={idx} className="bg-black bg-opacity-20 rounded p-2 border border-slate-800 font-mono text-[10px]">
+                        <span className="text-slate-400 block uppercase text-[8px] tracking-wider mb-0.5">{key}</span>
+                        <span className="text-[#C6963C] font-semibold">{val || detail}</span>
+                      </div>
+                    );
+                  })}
+                </div>
+              ) : (
+                <div className="text-slate-400 italic text-[11px] leading-relaxed">
+                  {selectedNode.type === "accused" && `Suspect Profile node linked inside current local jurisdiction. Check timeline sheets for detailed arrest logs.`}
+                  {selectedNode.type === "case" && `Case registry file. Includes sections for chargesheet filings, gravity offence categorisation, and complaints.`}
+                  {selectedNode.type === "phone" && `Communication asset / Station link logged in cell tower details.`}
+                  {!["accused", "case", "phone"].includes(selectedNode.type) && `Entity node parameters registered in SQLite Case registry tables.`}
+                </div>
+              )}
+            </div>
 
-          ctx.save();
-          ctx.globalAlpha = isFade ? 0.25 : 1.0;
-
-          // Render custom node shapes
-          let r = 5.5;
-          let color = "#EF4444"; // Suspect node (Red)
-          if (node.type === "case") {
-            color = "#2563EB"; // Case Node (Blue)
-            r = 6.5;
-          } else if (node.type === "phone" || node.type === "station") {
-            color = "#EAB308"; // Communication Asset (Gold)
-            r = 4.5;
-          }
-
-          ctx.beginPath();
-          ctx.arc(node.x, node.y, r, 0, 2 * Math.PI, false);
-          ctx.fillStyle = color;
-          ctx.fill();
-
-          ctx.lineWidth = isHovered ? 2.5 / globalScale : 1.2 / globalScale;
-          ctx.strokeStyle = isHovered ? "#FFFFFF" : (theme === "dark" ? "#1E293B" : "#E2E8F0");
-          ctx.stroke();
-
-          // Render suspect avatar icon inside accused nodes
-          if (node.type === "accused") {
-            ctx.fillStyle = "#FFFFFF";
-            ctx.beginPath();
-            ctx.arc(node.x, node.y - 1.2, 1.4, 0, 2 * Math.PI, false);
-            ctx.fill();
-            ctx.beginPath();
-            ctx.arc(node.x, node.y + 2.5, 2.5, Math.PI, 2 * Math.PI, false);
-            ctx.fill();
-          }
-
-          // Node Text Labels drawn above shapes
-          ctx.textAlign = 'center';
-          ctx.textBaseline = 'middle';
-          ctx.fillStyle = theme === "dark" ? "#E2E8F0" : "#0F172A";
-
-          const displayLabel = label.length > 15 ? label.slice(0, 12) + "..." : label;
-          ctx.fillText(displayLabel, node.x, node.y - r - (fontSize / 2) - 2);
-
-          ctx.restore();
-        }}
-        linkColor={link => {
-          const isHighlighted = highlightLinks.has(link);
-          const isFade = highlightLinks.size > 0 && !isHighlighted;
-          if (isFade) return theme === "dark" ? "#1e293b20" : "#cbd5e120";
-          return link.type === "USES" ? "#EAB308" : "#EF4444";
-        }}
-        linkWidth={link => (highlightLinks.has(link) ? 2.2 : 1.0)}
-        linkDirectionalParticles={1.5}
-        linkDirectionalParticleWidth={link => (highlightLinks.size > 0 && highlightLinks.has(link) ? 1.5 : 0)}
-        linkDirectionalParticleSpeed={0.006}
-      />
+            <button
+              onClick={() => {
+                if (selectedNode.type === "case" || selectedNode.id.includes("-2026-")) {
+                  onNodeClick(selectedNode.id);
+                } else {
+                  const cleanName = selectedNode.id.replace("PERSON_", "").replace("ACC_", "");
+                  onNodeClick(cleanName);
+                }
+              }}
+              className="w-full py-2 bg-[#0F2745] hover:bg-[#C6963C] hover:text-[#0B1F3A] border border-[#1E3A5F] rounded font-mono font-bold text-center text-[10px] uppercase transition-all tracking-wider text-[#C6963C]"
+            >
+              Analyze Relations
+            </button>
+          </div>
+        ) : (
+          <div className="flex-1 flex flex-col justify-center items-center text-center p-4 text-slate-400 space-y-3">
+            <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" className="opacity-60 text-[#C6963C]">
+              <circle cx="12" cy="12" r="10" />
+              <line x1="12" y1="16" x2="12" y2="12" />
+              <line x1="12" y1="8" x2="12.01" y2="8" />
+            </svg>
+            <div className="font-mono text-[10px] font-semibold uppercase tracking-wider text-[#C6963C]">Inspector Panel</div>
+            <p className="text-[10px] leading-relaxed">
+              Click on any node (suspect, bank account, case file, phone log) inside the visual network graph to audit its transaction balances, age bracket, and relation paths.
+            </p>
+          </div>
+        )}
+      </div>
     </div>
   );
 }
@@ -1657,7 +2222,7 @@ function ReasoningBlock({ msg, theme, isRawSqlPermitted }) {
             <span className="font-bold">{msg.route.toUpperCase()} ROUTER</span>
           </div>
 
-          {msg.sql && (
+          {msg.sql !== null && msg.sql !== undefined && msg.sql !== "" && (
             <div className="space-y-1">
               <div className="text-slate-400 flex items-center justify-between text-[9px]">
                 <span>Generated SQLite Query:</span>

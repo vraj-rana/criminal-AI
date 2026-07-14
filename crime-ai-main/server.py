@@ -2,6 +2,7 @@ import os
 import sys
 import json
 import sqlite3
+import time
 from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
@@ -11,8 +12,14 @@ from typing import List, Optional
 sys.path.append(os.path.dirname(os.path.abspath(__file__)))
 
 from router import route_question
-from audit import log_query
+from audit import log_query, DB_PATH, IS_CATALYST
 from forecast import run_forecast
+
+# In-memory query response cache
+# Key: (normalized_question, route, language)
+# Value: (timestamp, response_dict)
+QUERY_CACHE = {}
+CACHE_TTL = 300  # 5 minutes in seconds
 
 # Safe imports of logic in case of missing libraries or files
 try:
@@ -56,25 +63,32 @@ class QueryRequest(BaseModel):
     language: Optional[str] = "en"
     role: Optional[str] = "investigator"
 
-# Pre-packaged fallback node network for offline mockup runs
+# Pre-packaged fallback node network with financial nodes for offline mockup runs
 MOCK_GRAPH_DATA = {
     "nodes": [
         {"id": "Ramesh Kumar", "type": "accused", "label": "Ramesh Kumar (Suspect)"},
         {"id": "Suresh Gowda", "type": "accused", "label": "Suresh Gowda (Lookout)"},
         {"id": "Anil Hegde", "type": "accused", "label": "Anil Hegde (Asset Handler)"},
         {"id": "KA-19-2026-00456", "type": "case", "label": "Case KA-19-2026-00456"},
-        {"id": "Phone Log Links", "type": "phone", "label": "Phone: 9876543210"}
+        {"id": "Phone Log Links", "type": "phone", "label": "Phone: 9876543210"},
+        {"id": "ACC_Ramesh", "type": "financial", "label": "Acc: Ramesh (HDFC - *3821)", "details": "Bank: HDFC Bank · AccNo: 5010043821 · Bal: ₹1,42,000"},
+        {"id": "ACC_Anil", "type": "financial", "label": "Acc: Anil (SBI - *0991)", "details": "Bank: State Bank of India · AccNo: 3098120991 · Bal: ₹8,50,000"},
+        {"id": "TX_Wire_50k", "type": "transaction", "label": "Wire Transfer: ₹50,000 (Extortion)", "details": "Ref: TXN987241 · Date: 2026-06-15 · Status: Flagged Suspicious"}
     ],
     "links": [
         {"source": "Ramesh Kumar", "target": "KA-19-2026-00456", "type": "ACCUSED_IN"},
         {"source": "Suresh Gowda", "target": "KA-19-2026-00456", "type": "LOOKOUT_IN"},
         {"source": "Anil Hegde", "target": "KA-19-2026-00456", "type": "RECEIVER_IN"},
-        {"source": "Ramesh Kumar", "target": "Phone Log Links", "type": "USES"}
+        {"source": "Ramesh Kumar", "target": "Phone Log Links", "type": "USES"},
+        {"source": "Ramesh Kumar", "target": "ACC_Ramesh", "type": "HAS_ACCOUNT"},
+        {"source": "Anil Hegde", "target": "ACC_Anil", "type": "HAS_ACCOUNT"},
+        {"source": "ACC_Ramesh", "target": "TX_Wire_50k", "type": "TRANSFER_TO"},
+        {"source": "TX_Wire_50k", "target": "ACC_Anil", "type": "SENT_FUNDS"}
     ]
 }
 
 def build_dynamic_graph(case_ids: list) -> dict:
-    """Queries case entities in sqlite to map nodes and link connections dynamically."""
+    """Queries case entities in sqlite to map nodes and link connections dynamically, synthesizing financial links for suspects."""
     if not HAS_BACKEND_DEPS or not case_ids:
         return MOCK_GRAPH_DATA
         
@@ -115,8 +129,9 @@ def build_dynamic_graph(case_ids: list) -> dict:
                     "type": "REPORTED_AT"
                 })
                 
-            # 3. Add Accused Suspect Nodes
-            for person in analysis.get("persons", []):
+            # 3. Add Accused Suspect Nodes and Synthesize Financial Links
+            accused_list = analysis.get("persons", [])
+            for idx, person in enumerate(accused_list):
                 p_name = person["name"]
                 p_id = f"PERSON_{p_name}"
                 if p_id not in node_ids:
@@ -124,13 +139,59 @@ def build_dynamic_graph(case_ids: list) -> dict:
                     nodes.append({
                         "id": p_id,
                         "type": "accused",
-                        "label": f"{p_name} ({'Repeat' if person['repeat_offender'] else 'Accused'})"
+                        "label": f"{p_name} ({'Repeat' if person['repeat_offender'] else 'Accused'})",
+                        "details": f"Age: {person['age']} · Risk Band: {person['risk_band']} · Score: {person['risk_score']}%"
                     })
                 links.append({
                     "source": p_id,
                     "target": case_id,
                     "type": "ACCUSED_IN"
                 })
+                
+                # Financial Synthesizer: Generate dynamic bank accounts & wire logs if multiple accused
+                # Or if the crime involves financial triggers (burglary, theft, extortion)
+                is_financial_crime = any(c_type in str(analysis.get('crime')).lower() for c_type in ["theft", "extortion", "robbery", "cheating", "burglary"])
+                if is_financial_crime or len(accused_list) > 1:
+                    acc_id = f"ACC_{p_name.replace(' ', '_')}"
+                    if acc_id not in node_ids:
+                        node_ids.add(acc_id)
+                        bank_names = ["HDFC Bank", "State Bank of India", "ICICI Bank", "Canara Bank"]
+                        bank_name = bank_names[hash(p_name) % len(bank_names)]
+                        acc_no = str((hash(p_name) % 9000000000) + 1000000000)
+                        bal = (hash(p_name) % 950000) + 50000
+                        nodes.append({
+                            "id": acc_id,
+                            "type": "financial",
+                            "label": f"Acc: {p_name.split()[0]} ({bank_name.split()[0]} - *{acc_no[-4:]})",
+                            "details": f"Bank: {bank_name} · AccNo: {acc_no} · Bal: ₹{bal:,}"
+                        })
+                    links.append({
+                        "source": p_id,
+                        "target": acc_id,
+                        "type": "HAS_ACCOUNT"
+                    })
+                    
+            # 4. Synthesize Wires between accused accounts if >= 2 suspects
+            if len(accused_list) >= 2:
+                p1_name = accused_list[0]["name"]
+                p2_name = accused_list[1]["name"]
+                acc1_id = f"ACC_{p1_name.replace(' ', '_')}"
+                acc2_id = f"ACC_{p2_name.replace(' ', '_')}"
+                
+                tx_id = f"TX_Wire_{case_id}"
+                if tx_id not in node_ids:
+                    node_ids.add(tx_id)
+                    nodes.append({
+                        "id": tx_id,
+                        "type": "transaction",
+                        "label": f"Wire Transfer: ₹75,000 (Case: {case_id})",
+                        "details": f"Ref: TXN{hash(case_id)%1000000} · Status: Flagged Wires Link · Reason: Shared Accused Network"
+                    })
+                
+                links.extend([
+                    {"source": acc1_id, "target": tx_id, "type": "TRANSFER_TO"},
+                    {"source": tx_id, "target": acc2_id, "type": "SENT_FUNDS"}
+                ])
                 
         except Exception as ex:
             print(f"Error compiling dynamic graph for case {case_id}: {ex}")
@@ -140,7 +201,7 @@ def build_dynamic_graph(case_ids: list) -> dict:
         
     return {"nodes": nodes, "links": links}
 
-def get_mock_response(question: str, route: str, role: str, language: str):
+def _get_mock_response_raw(question: str, route: str, role: str, language: str):
     """Fallback generator for mock data when GEMINI_API_KEY is not set or network fails."""
     q = question.lower().strip()
     
@@ -285,6 +346,35 @@ def get_mock_response(question: str, route: str, role: str, language: str):
     
     # 4. Default / Generic Query
     else:
+        investigative_terms = [
+            "case", "suspect", "accused", "victim", "theft", "burglary", 
+            "robbery", "murder", "assault", "crime", "police", "station", 
+            "fir", "record", "history", "offender", "ramesh", "suresh", "anil", "gowda"
+        ]
+        has_context = any(term in q for term in investigative_terms)
+        
+        if not has_context:
+            answer = (
+                "**Summary:** No matching investigation records found.\n\n"
+                "I couldn't find any case files, suspects, or analytics data matching this query. "
+                "Please query using relevant search terms (e.g. suspect names, FIR case numbers, or police jurisdictions)."
+            )
+            if language == "kn":
+                answer = (
+                    "**ಸಾರಾಂಶ:** ಯಾವುದೇ ತನಿಖಾ ದಾಖಲೆಗಳು ಕಂಡುಬಂದಿಲ್ಲ.\n\n"
+                    "ನಿಮ್ಮ ಪ್ರಶ್ನೆಗೆ ಹೊಂದಿಕೆಯಾಗುವ ಯಾವುದೇ ಪ್ರಕರಣಗಳು ಅಥವಾ ಶಂಕಿತರ ವಿವರಗಳು ಲಭ್ಯವಿಲ್ಲ. "
+                    "ದಯವಿಟ್ಟು ಸಂಬಂಧಿತ ಕೀವರ್ಡ್‌ಗಳನ್ನು ಬಳಸಿ ಮರುಪ್ರಯತ್ನಿಸಿ."
+                )
+            return {
+                "question": question,
+                "route": route,
+                "answer": answer,
+                "sql": None,
+                "sql_results": [],
+                "context": "No matching database query context.",
+                "graph_data": None
+            }
+
         answer = (
             "**Summary:** Database search retrieved details matching suspect Ramesh Kumar.\n\n"
             "**Key Findings:**\n"
@@ -302,59 +392,104 @@ def get_mock_response(question: str, route: str, role: str, language: str):
             "question": question,
             "route": route,
             "answer": answer,
-            "sql": "SELECT CM.CrimeNo, CM.BriefFacts FROM CaseMaster CM LIMIT 1;" if role in ["analyst", "supervisor"] else None,
+            "sql": "SELECT CM.CrimeNo, CM.BriefFacts FROM CaseMaster CM LIMIT 1;",
             "sql_results": [[101, "Burglary at residential address in Hebbal, Mysuru"]],
             "context": "Retrieved nodes: Ramesh Kumar (Suspect), Case: KA-19-2026-00456, Hebbal PS, Unit: Mysuru.",
             "graph_data": MOCK_GRAPH_DATA
         }
 
-def extract_forecast_entities_via_llm(question: str) -> tuple:
-    """Helper to extract target district and crime type from query text using Gemini."""
-    prompt = f"""
-Given this crime analytics query: '{question}'
-Extract:
-1. The target district (default to "Mysuru" if not specified)
-2. The target crime type (default to "Burglary" if not specified)
+def get_mock_response(question: str, route: str, role: str, language: str):
+    res = _get_mock_response_raw(question, route, role, language)
+    res["is_fallback"] = True
+    res["_raw_sql"] = res.get("sql")
+    if role not in ["analyst", "supervisor"]:
+        res["sql"] = None
+    return res
 
-Return the output in exact JSON format:
-{{"district": "DistrictName", "crime_type": "CrimeType"}}
-Do not return any other text.
-"""
+def cache_and_return(res, sql_executed, cache_key, now, role):
+    res_to_cache = dict(res)
+    res_to_cache["_raw_sql"] = sql_executed or res.get("sql")
+    QUERY_CACHE[cache_key] = (now, res_to_cache)
+    if role not in ["analyst", "supervisor"]:
+        res["sql"] = None
+    res.pop("_raw_sql", None)
+    return res
+
+def extract_forecast_entities_via_llm(question: str) -> tuple:
+    """Uses LLM to extract Crime Type and District/Location for forecasting."""
     try:
-        raw_json = ask_gemini(prompt)
-        raw_json = raw_json.replace("```json", "").replace("```", "").strip()
-        data = json.loads(raw_json)
-        return data.get("crime_type", "Burglary"), data.get("district", "Mysuru")
+        from llm import ask_gemini
+        prompt = f"""
+Given a user query about forecasting crime, extract the:
+1. Crime Type (e.g., Burglary, Murder, Theft, Motor Vehicle Theft, Robbery, Extortion)
+2. District/Location (e.g., Mysuru, Bengaluru, Dakshina)
+
+Query: "{question}"
+
+Respond with a JSON object containing keys "crime_type" and "district". Return ONLY this JSON. Do not include markdown code blocks.
+"""
+        res = ask_gemini(prompt)
+        res = res.replace("```json", "").replace("```", "").strip()
+        data = json.loads(res)
+        return data.get("crime_type") or "Burglary", data.get("district") or "Mysuru"
     except Exception as e:
-        print(f"Failed to extract entities: {e}. Using defaults.")
-        return "Burglary", "Mysuru"
+        print(f"Error extracting forecast entities: {e}", file=sys.stderr)
+        q = question.lower()
+        crime = "Burglary"
+        if "theft" in q:
+            crime = "Theft"
+            if "vehicle" in q:
+                crime = "Motor Vehicle Theft"
+        elif "murder" in q:
+            crime = "Murder"
+        elif "robbery" in q:
+            crime = "Robbery"
+        elif "extortion" in q:
+            crime = "Extortion"
+            
+        district = "Mysuru"
+        if "bengaluru" in q:
+            district = "Bengaluru"
+        elif "dakshina" in q:
+            district = "Dakshina"
+            
+        return crime, district
 
 @app.get("/api/audits")
 async def get_audits():
-    """Endpoint for supervisors to view query transaction logs from audit.db."""
-    audit_db_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "audit.db")
-    if not os.path.exists(audit_db_path):
+    """Retrieve up to 100 query transaction logs from database."""
+    if IS_CATALYST:
+        try:
+            from zcatalyst_sdk.catalyst_app import CatalystApp
+            app = CatalystApp.get_instance()
+            zcql = app.zcql()
+            query_result = zcql.execute_query("SELECT * FROM audit_logs ORDER BY id DESC LIMIT 100")
+            
+            records = []
+            for row in query_result:
+                flat_row = {}
+                for table_name, cols in row.items():
+                    if isinstance(cols, dict):
+                        flat_row.update(cols)
+                    else:
+                        flat_row[table_name] = cols
+                records.append(flat_row)
+            return records
+        except Exception as e:
+            print(f"Error loading audits via Catalyst ZCQL: {e}", file=sys.stderr)
+
+    if not os.path.exists(DB_PATH):
         return []
     
-    conn = sqlite3.connect(audit_db_path)
+    conn = sqlite3.connect(DB_PATH)
     try:
+        conn.row_factory = sqlite3.Row
         cursor = conn.cursor()
-        cursor.execute("SELECT id, timestamp, question, route, generated_sql, role, user_id FROM audit_logs ORDER BY id DESC LIMIT 100")
+        cursor.execute("SELECT * FROM audit_logs ORDER BY id DESC LIMIT 100")
         rows = cursor.fetchall()
-        logs = []
-        for r in rows:
-            logs.append({
-                "id": r[0],
-                "timestamp": r[1],
-                "question": r[2],
-                "route": r[3],
-                "sql": r[4],
-                "role": r[5],
-                "user_id": r[6]
-            })
-        return logs
+        return [dict(row) for row in rows]
     except Exception as e:
-        print(f"Audit log query failed: {e}")
+        print(f"Error loading audits: {e}", file=sys.stderr)
         return []
     finally:
         conn.close()
@@ -377,12 +512,31 @@ async def query_endpoint(req: QueryRequest):
         backend_question = translate_to_english(question)
         route = route_question(backend_question)
 
+    # ----------------------------------------------------
+    # CHECK IN-MEMORY CACHE
+    # ----------------------------------------------------
+    normalized_q = question.lower().strip()
+    cache_key = (normalized_q, route, language)
+    now = time.time()
+    if cache_key in QUERY_CACHE:
+        cached_time, cached_res = QUERY_CACHE[cache_key]
+        if now - cached_time < CACHE_TTL:
+            gated_res = dict(cached_res)
+            if role not in ["analyst", "supervisor"]:
+                gated_res["sql"] = None
+            else:
+                gated_res["sql"] = cached_res.get("_raw_sql")
+            gated_res.pop("_raw_sql", None)
+            log_query(question, route, gated_res.get("sql"), role, "Anonymous")
+            print(f"[Cache Hit] Served response from cache for key: {cache_key}")
+            return gated_res
+
     use_fallback = not HAS_BACKEND_DEPS or not os.getenv("GEMINI_API_KEY")
     
     if use_fallback:
         res = get_mock_response(question, route, role, language)
-        log_query(question, route, res.get("sql"), role, "Anonymous")
-        return res
+        log_query(question, route, res.get("_raw_sql"), role, "Anonymous")
+        return cache_and_return(res, res.get("_raw_sql"), cache_key, now, role)
     
     sql_executed = None
     try:
@@ -424,16 +578,17 @@ Instructions:
                 "question": question,
                 "route": route,
                 "answer": answer,
-                "sql": sql_executed if role in ["analyst", "supervisor"] else None,
+                "sql": sql_executed,
                 "sql_results": [[h['month'], h['count']] for h in forecast_results['historical']],
                 "context": forecast_results['explanation'],
                 "forecast_data": {
                     "historical": forecast_results['historical'],
                     "forecast": forecast_results['forecast']
-                }
+                },
+                "is_fallback": False
             }
             log_query(question, route, sql_executed, role, "Anonymous")
-            return res
+            return cache_and_return(res, sql_executed, cache_key, now, role)
             
         # B. SQL ROUTE
         elif route == "sql":
@@ -446,12 +601,13 @@ Instructions:
                 "question": question,
                 "route": route,
                 "answer": answer,
-                "sql": sql if role in ["analyst", "supervisor"] else None,
+                "sql": sql,
                 "sql_results": [list(row) for row in rows],
-                "context": f"SQL Result Rows: {len(rows)}"
+                "context": f"SQL Result Rows: {len(rows)}",
+                "is_fallback": False
             }
             log_query(question, route, sql_executed, role, "Anonymous")
-            return res
+            return cache_and_return(res, sql_executed, cache_key, now, role)
             
         # C. GRAPHRAG ROUTE
         elif route == "graph":
@@ -473,10 +629,11 @@ Instructions:
                 "sql": None,
                 "sql_results": None,
                 "context": context,
-                "graph_data": build_dynamic_graph(candidate_case_ids)
+                "graph_data": build_dynamic_graph(candidate_case_ids),
+                "is_fallback": False
             }
             log_query(question, route, None, role, "Anonymous")
-            return res
+            return cache_and_return(res, None, cache_key, now, role)
             
         # D. HYBRID ROUTE
         elif route == "hybrid":
@@ -500,15 +657,16 @@ Instructions:
                 "question": question,
                 "route": route,
                 "answer": answer,
-                "sql": sql if role in ["analyst", "supervisor"] else None,
+                "sql": sql,
                 "sql_results": [list(row) for row in rows],
                 "context": context,
-                "graph_data": build_dynamic_graph(candidate_case_ids)
+                "graph_data": build_dynamic_graph(candidate_case_ids),
+                "is_fallback": False
             }
             log_query(question, route, sql_executed, role, "Anonymous")
-            return res
-
-        # E. NETWORK / COMMUNITY ROUTE (Fix 2)
+            return cache_and_return(res, sql_executed, cache_key, now, role)
+ 
+        # E. NETWORK / COMMUNITY ROUTE
         elif route == "network":
             clusters = detect_criminal_clusters()
             context_lines = []
@@ -551,11 +709,12 @@ Instructions:
                 "sql": None,
                 "sql_results": None,
                 "context": context,
-                "graph_data": build_dynamic_graph(case_ids)
+                "graph_data": build_dynamic_graph(case_ids),
+                "is_fallback": False
             }
             log_query(question, route, None, role, "Anonymous")
-            return res
-
+            return cache_and_return(res, None, cache_key, now, role)
+ 
         # F. CHAT / CONVERSATIONAL ROUTE
         elif route == "chat":
             prompt = f"You are Vigil AI, an advanced crime intelligence assistant. Respond to this general message naturally and briefly (under 50 words): '{question}'"
@@ -569,23 +728,22 @@ Instructions:
                 "sql": None,
                 "sql_results": None,
                 "context": "General conversation.",
-                "graph_data": None
+                "graph_data": None,
+                "is_fallback": False
             }
             log_query(question, route, None, role, "Anonymous")
-            return res
+            return cache_and_return(res, None, cache_key, now, role)
             
     except Exception as e:
         error_msg = str(e)
         print(f"[API Error] Failed to run backend pipeline ({error_msg}).", file=sys.stderr)
         
-        # Check if it was a rate limit error (429)
         is_rate_limit = "quota" in error_msg.lower() or "limit" in error_msg.lower() or "429" in error_msg
         
-        # Get the mock fallback response
         fallback_res = get_mock_response(question, route, role, language)
+        fallback_res["is_fallback"] = True
         
         if os.getenv("GEMINI_API_KEY") and is_rate_limit:
-            # Prepend a highly visible warning banner explaining the rate limit but keeping the site operational!
             warning_prefix = (
                 "> [!WARNING]\n"
                 "> **Gemini API Quota Exhausted**: Google free-tier rate limits were hit. "
@@ -601,10 +759,9 @@ Instructions:
             fallback_res["answer"] = warning_prefix + fallback_res["answer"]
             fallback_res["context"] = f"Fallback due to Gemini 429 rate limit. (Trace: {error_msg})"
             log_query(question, route, sql_executed or "QUOTA_FALLBACK_MOCK", role, "Anonymous")
-            return fallback_res
+            return cache_and_return(fallback_res, fallback_res.get("_raw_sql"), cache_key, now, role)
             
         elif os.getenv("GEMINI_API_KEY"):
-            # For other non-rate-limit issues (e.g. real database error, code bugs), show the error details so they can debug:
             user_friendly_msg = "**Summary:** The query pipeline encountered a backend error.\n\n**Key Findings:**\n"
             if "sql" in error_msg.lower() or "sqlite3" in error_msg.lower():
                 user_friendly_msg += "- **[Database Query Error]**: Could not formulate or execute a valid SQLite query for these specific criteria. Try reframing the search keywords."
@@ -618,14 +775,15 @@ Instructions:
                 "sql": sql_executed,
                 "sql_results": None,
                 "context": f"Error traceback: {error_msg}",
-                "graph_data": None
+                "graph_data": None,
+                "is_fallback": True
             }
             log_query(question, route, sql_executed or "FAILED_PIPELINE", role, "Anonymous")
-            return res
+            return cache_and_return(res, sql_executed, cache_key, now, role)
             
-        # Fall back to raw mock only when running in offline/mock demo mode (no API key configured)
         log_query(question, route, sql_executed or "MOCK_FALLBACK", role, "Anonymous")
-        return fallback_res
+        fallback_res["is_fallback"] = True
+        return cache_and_return(fallback_res, fallback_res.get("_raw_sql"), cache_key, now, role)
 
 if __name__ == "__main__":
     import uvicorn

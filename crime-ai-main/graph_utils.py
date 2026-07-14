@@ -1,8 +1,11 @@
 import pickle
 import networkx as nx
 
-# Load graph once
-with open("crime_graph.pkl", "rb") as f:
+import os
+
+# Load graph once using absolute path
+_dir = os.path.dirname(os.path.abspath(__file__))
+with open(os.path.join(_dir, "crime_graph.pkl"), "rb") as f:
     G = pickle.load(f)
 
 print("Graph Loaded")

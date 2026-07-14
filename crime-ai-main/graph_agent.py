@@ -22,7 +22,10 @@ model = SentenceTransformer("all-MiniLM-L6-v2")
 # Load ChromaDB
 # -----------------------------------------------------
 
-client = chromadb.PersistentClient(path="./chromadb")
+import os
+
+_dir = os.path.dirname(os.path.abspath(__file__))
+client = chromadb.PersistentClient(path=os.path.join(_dir, "chromadb"))
 
 collection = client.get_collection("crime_documents")
 
@@ -32,7 +35,7 @@ collection = client.get_collection("crime_documents")
 
 doc_lookup = {}
 
-with open("documents.jsonl", "r", encoding="utf8") as f:
+with open(os.path.join(_dir, "documents.jsonl"), "r", encoding="utf8") as f:
 
     for line in f:
 

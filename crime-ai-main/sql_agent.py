@@ -4,7 +4,10 @@ from llm import ask_gemini
 # Load Database Schema
 # -----------------------------------------------------
 
-with open("Schema_AI.txt", "r", encoding="utf-16") as f:
+import os
+
+_dir = os.path.dirname(os.path.abspath(__file__))
+with open(os.path.join(_dir, "Schema_AI.txt"), "r", encoding="utf-16") as f:
     schema = f.read()
 
 

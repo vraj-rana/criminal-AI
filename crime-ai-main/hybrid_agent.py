@@ -18,9 +18,12 @@ MAX_CASES = 5
 # Build document lookup
 # ----------------------------------------------------
 
+import os
+
 doc_lookup = {}
 
-with open("documents.jsonl", "r", encoding="utf8") as f:
+_dir = os.path.dirname(os.path.abspath(__file__))
+with open(os.path.join(_dir, "documents.jsonl"), "r", encoding="utf8") as f:
 
     for line in f:
 

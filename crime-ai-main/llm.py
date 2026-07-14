@@ -100,13 +100,16 @@ Your response MUST strictly follow this exact Markdown format. Do not wrap the e
 **Key Findings:**
 - **[Name of Suspect / Case ID / Metric Category]**: <specific details about this category, with critical metrics/numbers explicitly **bolded**>
 - **[Next Suspect / Next Category]**: <details with critical metrics/numbers explicitly **bolded**>
-- Up to 5 structured bullets max. Do not write generic sentences without stats/counts.
+- Up to 4 structured bullets max. Do not write generic sentences without stats/counts.
 
-**Details:**
-<1-2 short paragraphs only if genuinely needed beyond the bullets — omit this section completely if the bullet points already cover the findings>
+**Investigative Leads:**
+- <1-2 concrete action items for next steps, e.g. checking specific phone logs, interviewing associates, or auditing financial transaction flows>
+
+**Chronological Timeline:** (Include only if case dates/incident dates are present in the context, otherwise omit this section entirely)
+- **[YYYY-MM-DD]**: <Brief description of crime or arrest event>
 
 Rules:
-- Be concise. Keep the total word count under 180 words.
+- Be professional, concise, and actionable. Keep the total word count under 280 words.
 - Do not repeat the user's question back. Do not write a closing summary paragraph.
 - Every claim must carry its number, percentage, count, name, or metric inline. Do not use generic phrases.
 """
@@ -119,13 +122,16 @@ Your response MUST strictly follow this exact Kannada Markdown format. Do not wr
 **ಮುಖ್ಯಾಂಶಗಳು:**
 - **[ಆರೋಪಿಯ ಹೆಸರು / ಪ್ರಕರಣ ಸಂಖ್ಯೆ / ವರ್ಗ]**: <ನಿರ್ದಿಷ್ಟ ವಿವರಗಳು, ಮುಖ್ಯ ಸಂಖ್ಯೆಗಳು ಮತ್ತು ಹೆಸರುಗಳನ್ನು **ದಪ್ಪ ಅಕ್ಷರಗಳಲ್ಲಿ (bold)** ಬರೆಯಿರಿ>
 - **[ಮುಂದಿನ ಆರೋಪಿ / ಮುಂದಿನ ಪ್ರಕರಣ]**: <ವಿವರಗಳು, ಮುಖ್ಯ ಸಂಖ್ಯೆಗಳನ್ನು **ದಪ್ಪ ಅಕ್ಷರಗಳಲ್ಲಿ (bold)** ಬರೆಯಿರಿ>
-- ಗರಿಷ್ಠ 5 ಬುಲೆಟ್‌ಗಳು ಮಾತ್ರ.
+- ಗರಿಷ್ಠ 4 ಬುಲೆಟ್‌ಗಳು ಮಾತ್ರ.
 
-**ವಿವರಗಳು:**
-<ಬುಲೆಟ್ ಪಾಯಿಂಟ್‌ಗಳ ಹೊರತಾಗಿ ಅಗತ್ಯವಿದ್ದರೆ ಮಾತ್ರ 1-2 ಸಣ್ಣ ಪ್ಯಾರಾಗ್ರಾಫ್ ವಿವರಣೆ — ಬುಲೆಟ್ ಪಾಯಿಂಟ್‌ಗಳಲ್ಲೇ ಎಲ್ಲ ಮಾಹಿತಿ ಇದ್ದರೆ ಈ ವಿಭಾಗವನ್ನು ಸಂಪೂರ್ಣವಾಗಿ ಬಿಟ್ಟುಬಿಡಿ>
+**ತನಿಖಾ ಸುಳಿವುಗಳು:**
+- <1-2 ಪ್ರಮುಖ ತನಿಖಾ ಹೆಜ್ಜೆಗಳು, ಉದಾಹರಣೆಗೆ ಸಹಚರರನ್ನು ವಿಚಾರಣೆ ಮಾಡುವುದು ಅಥವಾ ಬ್ಯಾಂಕ್ ವರ್ಗಾವಣೆಯನ್ನು ಪರಿಶೀಲಿಸುವುದು>
+
+**ಕಾಲಾನುಕ್ರಮದ ದಾಖಲೆ:** (ಪ್ರಕರಣದ ದಿನಾಂಕಗಳು ಲಭ್ಯವಿದ್ದರೆ ಮಾತ್ರ ಈ ವಿಭಾಗವನ್ನು ಸೇರಿಸಿ, ಇಲ್ಲದಿದ್ದರೆ ಇದನ್ನು ಸಂಪೂರ್ಣವಾಗಿ ಬಿಟ್ಟುಬಿಡಿ)
+- **[ವರ್ಷ-ತಿಂಗಳು-ದಿನಾಂಕ]**: <ಸಣ್ಣ ವಿವರಣೆ>
 
 Rules:
-- Be concise. Keep the total word count under 180 words.
+- Keep the total word count under 280 words.
 - Respond completely in Kannada.
 - Every claim must carry its number, percentage, count, name, or metric inline.
 """
