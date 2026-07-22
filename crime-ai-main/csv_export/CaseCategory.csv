@@ -1,0 +1,5 @@
+CaseCategoryID,CodeDigit,LookupValue
+1,1,FIR
+2,3,UDR
+3,4,PAR
+4,8,Zero FIR

@@ -1,0 +1,8 @@
+{
+  "stack": "python",
+  "command": "uvicorn server:app --host 0.0.0.0 --port $PORT",
+  "memory": 1024,
+  "env_variables": {
+    "ENV": "production"
+  }
+}

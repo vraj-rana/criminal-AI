@@ -1,0 +1,26 @@
+CrimeSubHeadID,CrimeHeadID,CrimeHeadName,SeqID
+1,1,Murder,1
+2,1,Attempt to Murder,2
+3,1,Culpable Homicide,3
+4,1,Grievous Hurt,4
+5,1,Hurt,5
+6,1,Kidnapping,6
+7,2,Theft,1
+8,2,Motor Vehicle Theft,2
+9,2,Burglary,3
+10,2,Robbery,4
+11,2,Dacoity,5
+12,2,Extortion,6
+13,2,Criminal Trespass,7
+14,3,Dowry Death,1
+15,3,Cruelty by Husband,2
+16,3,Assault on Woman,3
+17,3,Kidnapping of Woman,4
+18,4,Cheating,1
+19,4,Forgery,2
+20,4,Criminal Breach of Trust,3
+21,4,Counterfeiting,4
+22,5,NDPS,1
+23,5,Excise,2
+24,5,Gambling,3
+25,5,Arms Act,4
